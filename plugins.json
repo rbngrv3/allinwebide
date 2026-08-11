@@ -44,5 +44,10 @@
         "networkDomains": ["api.github.com"]
       }
     }
+  ],
+  "themes": [
+    { "id": "allin.emberglass", "name": "Emberglass", "version": "1.0.0", "author": "All-In Studio", "type": "theme", "description": "Warm obsidian glass with ember orange focus states.", "theme": { "editorTheme": "studio-slate", "preview": ["#18131b", "#ff8d5c", "#f6c177"], "tokens": { "--bg":"#18131b", "--bg-raised":"#241c26", "--bg-panel":"#2c2230", "--bg-hover":"#3a2b3b", "--bg-input":"#15111a", "--text":"#fff5ee", "--text-secondary":"#d8c3bd", "--muted":"#a58e91", "--border":"rgba(255,210,195,.18)", "--border-strong":"rgba(255,205,184,.35)", "--accent":"#ff8d5c", "--accent-soft":"rgba(255,141,92,.18)", "--success":"#9bd49a" } } },
+    { "id": "allin.tidal-bloom", "name": "Tidal Bloom", "version": "1.0.0", "author": "All-In Studio", "type": "theme", "description": "Deep ocean blues with a bright mint current.", "theme": { "editorTheme": "studio-aurora", "preview": ["#081c2b", "#4bd5c2", "#7ca8ff"], "tokens": { "--bg":"#081c2b", "--bg-raised":"#0e2a3c", "--bg-panel":"#12364a", "--bg-hover":"#1b465b", "--bg-input":"#071722", "--text":"#e9fbff", "--text-secondary":"#b9d9e5", "--muted":"#7fa9ba", "--border":"rgba(166,229,244,.18)", "--border-strong":"rgba(154,224,242,.35)", "--accent":"#4bd5c2", "--accent-soft":"rgba(75,213,194,.17)", "--success":"#8de6a1" } } },
+    { "id": "allin.lilac-noir", "name": "Lilac Noir", "version": "1.0.0", "author": "All-In Studio", "type": "theme", "description": "A soft violet night palette made for long creative sessions.", "theme": { "editorTheme": "studio-midnight", "preview": ["#171426", "#ad8cff", "#e7a6ff"], "tokens": { "--bg":"#171426", "--bg-raised":"#211c34", "--bg-panel":"#2b2443", "--bg-hover":"#393055", "--bg-input":"#12101d", "--text":"#f8f4ff", "--text-secondary":"#d6cbea", "--muted":"#9d90b7", "--border":"rgba(214,195,255,.18)", "--border-strong":"rgba(211,188,255,.36)", "--accent":"#ad8cff", "--accent-soft":"rgba(173,140,255,.18)", "--success":"#81d9ba" } } }
   ]
 }
