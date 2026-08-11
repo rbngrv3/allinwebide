@@ -1,0 +1,24 @@
+{
+  "name": "all-in-studio",
+  "version": "3.0.0",
+  "description": "A local-first learning IDE with live preview and sandboxed extensions.",
+  "main": "main.js",
+  "scripts": {
+    "test": "node --check main.js && node --check preload.js && node --check server.js",
+    "start": "electron .",
+    "server": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.2.1",
+    "monaco-editor": "^0.56.0",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0"
+  }
+}

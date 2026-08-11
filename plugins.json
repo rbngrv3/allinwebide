@@ -1,0 +1,93 @@
+<<<<<<< HEAD
+[
+  {
+    "id": "word-counter",
+    "name": "Live Word Counter",
+    "description": "Tracks word count live in your status bar.",
+    "version": "1.0.0",
+    "author": "rbngrv3",
+    "category": "Productivity",
+    "url": "https://raw.githubusercontent.com/rbngrv3/allinwebide/main/word-counter.js"
+  },
+  {
+    "id": "char-counter",
+    "name": "Character Counter",
+    "description": "Displays real-time character count for your active code.",
+    "version": "1.0.0",
+    "author": "rbngrv3",
+    "category": "Productivity",
+    "url": "https://raw.githubusercontent.com/rbngrv3/allinwebide/main/char-counter.js"
+  },
+  {
+    "id": "reading-time",
+    "name": "Reading Time Estimator",
+    "description": "Calculates estimated reading time based on text length.",
+    "version": "1.0.0",
+    "author": "rbngrv3",
+    "category": "Productivity",
+    "url": "https://raw.githubusercontent.com/rbngrv3/allinwebide/main/reading-time.js"
+  },
+  {
+    "id": "uppercase-transformer",
+    "name": "Quick Uppercase",
+    "description": "Adds a status bar button to instantly uppercase selected text.",
+    "version": "1.0.0",
+    "author": "rbngrv3",
+    "category": "Utilities",
+    "url": "https://raw.githubusercontent.com/rbngrv3/allinwebide/main/uppercase-transformer.js"
+  },
+  {
+    "id": "timestamp-logger",
+    "name": "Live Status Bar Clock",
+    "description": "Displays a clean live digital clock in your editor status bar.",
+    "version": "1.0.0",
+    "author": "rbngrv3",
+    "category": "Utilities",
+    "url": "https://raw.githubusercontent.com/rbngrv3/allinwebide/main/timestamp-logger.js"
+  },
+  {
+    "id": "dracula-theme",
+    "name": "Dracula Official",
+    "description": "A dark theme with vibrant purples, pinks, and greens.",
+    "version": "1.0.0",
+    "author": "Community",
+    "category": "Themes",
+    "url": "https://raw.githubusercontent.com/rbngrv3/allinwebide/main/dracula-theme.js"
+  }
+]
+=======
+{
+  "plugins": [
+    {
+      "id": "allin.quality-suite",
+      "name": "Quality Suite",
+      "version": "1.0.0",
+      "author": "All-In Studio",
+      "category": "Quality",
+      "description": "Local accessibility, metadata, design-token, and release checks for the current workspace.",
+      "url": "https://raw.githubusercontent.com/rbngrv3/allinwebide/main/plugins/quality-suite.js",
+      "permissions": { "panel": true, "workspaceRead": true, "activeEditor": false }
+    },
+    {
+      "id": "allin.http-lab",
+      "name": "HTTP Lab",
+      "version": "1.0.0",
+      "author": "All-In Studio",
+      "category": "Integration",
+      "description": "A project-aware HTTP client with saved non-secret fields, environments-ready requests, and a response inspector.",
+      "url": "https://raw.githubusercontent.com/rbngrv3/allinwebide/main/plugins/http-lab.js",
+      "permissions": { "panel": true, "storage": true, "activeEditor": false, "networkDomains": ["*"] }
+    },
+    {
+      "id": "allin.github-workbench",
+      "name": "GitHub Workbench",
+      "version": "1.0.0",
+      "author": "All-In Studio",
+      "category": "Integration",
+      "description": "Browse a repository's open issues and pull requests beside the current project.",
+      "url": "https://raw.githubusercontent.com/rbngrv3/allinwebide/main/plugins/github-workbench.js",
+      "permissions": { "panel": true, "storage": true, "activeEditor": false, "networkDomains": ["api.github.com"] }
+    }
+  ]
+}
+>>>>>>> 0aebe37 (Extension hub)
