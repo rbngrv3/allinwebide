@@ -57,7 +57,21 @@
         "activeEditor": true,
         "workspaceRead": true
       }
-    }
+    },
+    {
+  "id": "allin.luma-support",
+  "name": "Luma Environment",
+  "version": "1.0.0",
+  "author": "All-In Studio",
+  "category": "Language Support",
+  "description": "Luma syntax highlighting and a live, native canvas preview.",
+  "url": "https://raw.githubusercontent.com/rbngrv3/allinwebide/main/plugins/luma-support.js",
+  "permissions": {
+    "panel": true,
+    "activeEditor": true
+  }
+}
+
   ],
   "themes": [
     { "id": "allin.emberglass", "name": "Emberglass", "version": "1.0.0", "author": "All-In Studio", "type": "theme", "description": "Warm obsidian glass with ember orange focus states.", "theme": { "editorTheme": "studio-slate", "preview": ["#18131b", "#ff8d5c", "#f6c177"], "tokens": { "--bg":"#18131b", "--bg-raised":"#241c26", "--bg-panel":"#2c2230", "--bg-hover":"#3a2b3b", "--bg-input":"#15111a", "--text":"#fff5ee", "--text-secondary":"#d8c3bd", "--muted":"#a58e91", "--border":"rgba(255,210,195,.18)", "--border-strong":"rgba(255,205,184,.35)", "--accent":"#ff8d5c", "--accent-soft":"rgba(255,141,92,.18)", "--success":"#9bd49a" } } },
