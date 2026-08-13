@@ -43,6 +43,20 @@
         "activeEditor": false,
         "networkDomains": ["api.github.com"]
       }
+    },
+    {
+      "id": "allin.luma-support",
+      "name": "Luma Environment",
+      "version": "1.0.0",
+      "author": "All-In Studio",
+      "category": "Language Support",
+      "description": "Syntax highlighting and live canvas preview for the Luma programming language.",
+      "url": "https://raw.githubusercontent.com/rbngrv3/allinwebide/main/plugins/luma-support.js",
+      "permissions": {
+        "panel": true,
+        "activeEditor": true,
+        "workspaceRead": true
+      }
     }
   ],
   "themes": [
