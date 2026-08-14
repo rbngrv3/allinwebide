@@ -43,6 +43,16 @@ const TEXT_STYLE_SETTINGS = new Set(["gradient", "shadow", "font", "text_align",
 const BOOLEAN_STYLE_SETTINGS = new Set(["wrap"]);
 const STYLE_SETTINGS = new Set([...COLOR_STYLE_SETTINGS, ...NUMBER_STYLE_SETTINGS, ...TEXT_STYLE_SETTINGS, ...BOOLEAN_STYLE_SETTINGS]);
 const ANIMATION_SETTINGS = new Set(["effect", "duration", "delay", "easing", "repeat", "stagger"]);
+const DESIGN_SETTINGS = new Set(["intent", "feel", "size", "emphasis", "motion", "mood", "density"]);
+const DESIGN_CHOICES = {
+  intent: ["primary", "secondary", "quiet", "danger", "success"],
+  feel: ["confident", "soft", "crisp", "playful"],
+  size: ["compact", "comfortable", "generous"],
+  emphasis: ["low", "medium", "high"],
+  motion: ["none", "gentle", "spring"],
+  mood: ["calm", "vivid", "midnight", "warm"],
+  density: ["compact", "standard", "airy"],
+};
 
 function meaningfulLine(lines, start) {
   for (let index = start; index < lines.length; index += 1) {
@@ -349,7 +359,7 @@ function parse(source) {
   function statement(currentIndent) {
     const current = lines[position++];
     const content = current.text.trim();
-    const assignment = content.match(/^(let|state|remember|set)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
+    const assignment = content.match(/^(let|value|state|remember|set)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/);
     if (assignment) return { type: assignment[1], name: assignment[2], value: valueExpression(assignment[3], currentIndent, current.line), line: current.line };
     const data = content.match(/^data\s+([A-Za-z_][A-Za-z0-9_]*)\s+from\s+(.+?)\s+default\s+(.+)$/);
     if (data) return { type: "data", name: data[1], source: valueExpression(data[2], currentIndent, current.line), value: valueExpression(data[3], currentIndent, current.line), line: current.line };
@@ -360,14 +370,23 @@ function parse(source) {
     if (content === "theme:") return { type: "theme", values: themeBlock(requiredChildIndent(currentIndent), "theme"), line: current.line };
     const style = content.match(/^style\s+(#?)([A-Za-z_][A-Za-z0-9_]*):$/);
     if (style) return { type: "style", name: style[2], targetId: style[1] ? style[2] : null, values: themeBlock(requiredChildIndent(currentIndent), "style"), line: current.line };
+    const design = content.match(/^design\s+([A-Za-z_][A-Za-z0-9_]*):$/);
+    if (design) return { type: "design", name: design[1], values: themeBlock(requiredChildIndent(currentIndent), "design"), line: current.line };
     const animation = content.match(/^animation\s+([A-Za-z_][A-Za-z0-9_]*):$/);
     if (animation) return { type: "animation", name: animation[1], values: themeBlock(requiredChildIndent(currentIndent), "animation"), line: current.line };
     const action = content.match(/^action\s+([A-Za-z_][A-Za-z0-9_]*)(.*?)\s*:\s*$/);
     if (action) return { type: "action", name: action[1], parameters: namesFrom(action[2], current.line, "action"), actions: block(requiredChildIndent(currentIndent)), line: current.line };
     const fn = content.match(/^function\s+([A-Za-z_][A-Za-z0-9_]*)(.*?)\s*:\s*$/);
     if (fn) return { type: "function", name: fn[1], parameters: namesFrom(fn[2], current.line, "function"), body: block(requiredChildIndent(currentIndent)), line: current.line };
+    const component = content.match(/^component\s+([A-Za-z_][A-Za-z0-9_]*)(.*?)\s*:\s*$/);
+    if (component) return { type: "component", name: component[1], parameters: namesFrom(component[2], current.line, "component"), body: block(requiredChildIndent(currentIndent)), line: current.line };
     const screen = content.match(/^screen\s+([A-Za-z_][A-Za-z0-9_]*):$/);
     if (screen) return { type: "screen", name: screen[1], body: block(requiredChildIndent(currentIndent)), line: current.line };
+    const componentUse = content.match(/^use\s+([A-Za-z_][A-Za-z0-9_]*)(?:\((.*)\))?$/);
+    if (componentUse) {
+      const args = componentUse[2] === undefined || !componentUse[2].trim() ? [] : parseExpression(`[${componentUse[2]}]`, current.line).values;
+      return { type: "use", name: componentUse[1], args, line: current.line };
+    }
     const layout = content.match(/^(column|row|grid|card|form|section|header|footer|nav|aside|hero|overlay)(.*?)\s*:\s*$/);
     if (layout) {
       const decorators = visualDecorators(`layout${layout[2]}`, current.line);
@@ -583,7 +602,7 @@ function runFunction(functionDeclaration, args, context, line) {
   const localContext = { ...context, variables: localVariables, callStack: [...context.callStack, functionDeclaration.name] };
   function run(block) {
     for (const statement of block) {
-      if (statement.type === "let") {
+      if (statement.type === "let" || statement.type === "value") {
         localVariables.set(statement.name, evaluate(statement.value, localContext, statement.line));
         continue;
       }
@@ -593,7 +612,7 @@ function runFunction(functionDeclaration, args, context, line) {
         continue;
       }
       if (statement.type === "return") return { returned: true, value: evaluate(statement.value, localContext, statement.line) };
-      throw new LumaError("A function can contain 'let', 'if', and 'return'.", statement.line);
+      throw new LumaError("A function can contain 'value', 'let', 'if', and 'return'.", statement.line);
     }
     return null;
   }
@@ -693,7 +712,74 @@ function validateAnimationValues(animation, declaration) {
   if (!(animation.repeat === "forever" || (Number.isInteger(animation.repeat) && animation.repeat >= 1))) throw new LumaError("Animation repeat needs a whole number or \"forever\".", declaration.line);
 }
 
-function validateVisualElements(elements, styles, animations, ids = new Set(), insideLoop = false) {
+function designStyle(values, declaration, theme) {
+  const semantic = {};
+  const style = {};
+  const recipes = {
+    intent: {
+      primary: { intent: "primary", accent: theme.accent, accent_text: theme.accent_text },
+      secondary: { intent: "secondary", surface: theme.surface, text: theme.text, outline: theme.outline },
+      quiet: { intent: "quiet", surface: theme.canvas, text: theme.muted, outline: theme.canvas },
+      danger: { intent: "danger", accent: "#dc2626", accent_text: "#ffffff", focus_outline: "#fca5a5" },
+      success: { intent: "success", accent: "#059669", accent_text: "#ffffff", focus_outline: "#6ee7b7" },
+    },
+    feel: {
+      confident: { radius: 14, shadow: "medium", hover_lift: 2 },
+      soft: { radius: 24, shadow: "small", hover_lift: 1 },
+      crisp: { radius: 6, shadow: "none", outline_width: 1 },
+      playful: { radius: 999, shadow: "medium", hover_lift: 3 },
+    },
+    size: {
+      compact: { padding_x: 14, padding_y: 9, font_size: 14 },
+      comfortable: { padding_x: 20, padding_y: 13, font_size: 15 },
+      generous: { padding_x: 26, padding_y: 17, font_size: 17 },
+    },
+    emphasis: {
+      low: { opacity: 0.82, font_weight: 500 },
+      medium: { opacity: 1, font_weight: 650 },
+      high: { opacity: 1, font_weight: 760, shadow: "medium" },
+    },
+    motion: {
+      none: { transition: 0, hover_scale: 1, press_scale: 1 },
+      gentle: { transition: 220, hover_scale: 1.01, press_scale: 0.99 },
+      spring: { transition: 140, hover_scale: 1.035, hover_lift: 3, press_scale: 0.96 },
+    },
+    mood: {
+      calm: { surface: "#f8fafc", outline: "#dbe4ef", text: "#1e293b", muted: "#64748b" },
+      vivid: { surface: "#fdf4ff", outline: "#f0abfc", text: "#4a044e", muted: "#86198f" },
+      midnight: { surface: "#101827", outline: "#334155", text: "#e2e8f0", muted: "#94a3b8" },
+      warm: { surface: "#fff7ed", outline: "#fed7aa", text: "#431407", muted: "#9a3412" },
+    },
+    density: {
+      compact: { gap: 10, padding: 12, margin_bottom: 10 },
+      standard: { gap: 16, padding: 16, margin_bottom: 16 },
+      airy: { gap: 24, padding: 26, margin_bottom: 24 },
+    },
+  };
+  for (const setting of values) {
+    if (!DESIGN_SETTINGS.has(setting.name)) throw new LumaError(`'${setting.name}' is not a known design setting.`, setting.line);
+    const value = evaluate(setting.value, declaration.context, setting.line);
+    if (typeof value !== "string" || !DESIGN_CHOICES[setting.name].includes(value)) {
+      throw new LumaError(`Design setting '${setting.name}' can be ${DESIGN_CHOICES[setting.name].join(", ")}.`, setting.line);
+    }
+    semantic[setting.name] = value;
+    Object.assign(style, recipes[setting.name][value]);
+  }
+  return { semantic, style };
+}
+
+function componentContext(element, components, context) {
+  const component = components.get(element.name);
+  if (!component) throw new LumaError(`There is no component named '${element.name}'.`, element.line);
+  if (component.parameters.length !== element.args.length) {
+    throw new LumaError(`Component '${element.name}' needs ${component.parameters.length} value${component.parameters.length === 1 ? "" : "s"}.`, element.line);
+  }
+  const variables = new Map(context.variables);
+  component.parameters.forEach((name, index) => variables.set(name, evaluate(element.args[index], context, element.line)));
+  return { component, context: { ...context, variables } };
+}
+
+function validateVisualElements(elements, styles, animations, components, ids = new Set(), insideLoop = false, componentStack = []) {
   for (const element of elements) {
     if (element.style && !styles.has(element.style)) throw new LumaError(`There is no style named '${element.style}'.`, element.line);
     if (element.animation && !animations.has(element.animation)) throw new LumaError(`There is no animation named '${element.animation}'.`, element.line);
@@ -702,11 +788,18 @@ function validateVisualElements(elements, styles, animations, ids = new Set(), i
       if (ids.has(element.id)) throw new LumaError(`There is already an element with id '${element.id}'.`, element.line);
       ids.add(element.id);
     }
-    if (element.type === "layout") validateVisualElements(element.body, styles, animations, ids, insideLoop);
+    if (element.type === "layout") validateVisualElements(element.body, styles, animations, components, ids, insideLoop, componentStack);
     else if (element.type === "if") {
-      validateVisualElements(element.then, styles, animations, ids, insideLoop);
-      validateVisualElements(element.otherwise, styles, animations, ids, insideLoop);
-    } else if (element.type === "for") validateVisualElements(element.body, styles, animations, ids, true);
+      validateVisualElements(element.then, styles, animations, components, ids, insideLoop, componentStack);
+      validateVisualElements(element.otherwise, styles, animations, components, ids, insideLoop, componentStack);
+    } else if (element.type === "for") validateVisualElements(element.body, styles, animations, components, ids, true, componentStack);
+    else if (element.type === "use") {
+      const component = components.get(element.name);
+      if (!component) throw new LumaError(`There is no component named '${element.name}'.`, element.line);
+      if (component.parameters.length !== element.args.length) throw new LumaError(`Component '${element.name}' needs ${component.parameters.length} value${component.parameters.length === 1 ? "" : "s"}.`, element.line);
+      if (componentStack.includes(element.name)) throw new LumaError(`Component '${element.name}' keeps using itself.`, element.line);
+      validateVisualElements(component.body, styles, animations, components, ids, insideLoop, [...componentStack, element.name]);
+    }
   }
 }
 
@@ -717,10 +810,10 @@ function execute(program, { output = console.log } = {}) {
   const context = contextFor(variables, functions);
   function run(statements) {
     for (const statement of statements) {
-      if (["let", "state", "remember", "data", "set"].includes(statement.type)) variables.set(statement.name, evaluate(statement.value, context, statement.line));
+      if (["let", "value", "state", "remember", "data", "set"].includes(statement.type)) variables.set(statement.name, evaluate(statement.value, context, statement.line));
       else if (statement.type === "show") output(String(evaluate(statement.value, context, statement.line)));
       else if (statement.type === "if") run(evaluate(statement.condition, context, statement.line) ? statement.then : statement.otherwise);
-      else if (["app", "theme", "style", "animation", "api", "screen", "action", "function"].includes(statement.type)) continue;
+      else if (["app", "theme", "style", "design", "animation", "api", "screen", "component", "action", "function"].includes(statement.type)) continue;
       else throw new LumaError(`'${statement.type}' only makes sense inside a visual app.`, statement.line);
     }
   }
@@ -750,7 +843,9 @@ function appDefinition(source, storage = null, data = null) {
   const functions = declarationMap(program, "function", "function");
   const actions = declarationMap(program, "action", "action");
   const apis = declarationMap(program, "api", "api");
+  const components = declarationMap(program, "component", "component");
   const styleDeclarations = program.statements.filter((statement) => statement.type === "style");
+  const designDeclarations = program.statements.filter((statement) => statement.type === "design");
   const animationDeclarations = declarationMap(program, "animation", "animation");
   const stateNames = new Set();
   const rememberedNames = new Set();
@@ -758,7 +853,7 @@ function appDefinition(source, storage = null, data = null) {
   const dataSources = new Map();
   const context = contextFor(variables, functions);
   for (const statement of program.statements) {
-    if (["let", "state", "remember", "data"].includes(statement.type)) {
+    if (["let", "value", "state", "remember", "data"].includes(statement.type)) {
       variables.set(statement.name, evaluate(statement.value, context, statement.line));
       if (statement.type === "state" || statement.type === "remember" || statement.type === "data") stateNames.add(statement.name);
       if (statement.type === "remember") rememberedNames.add(statement.name);
@@ -827,6 +922,13 @@ function appDefinition(source, storage = null, data = null) {
     validateStyleValues(values, declaration);
     target.set(declaration.name, values);
   }
+  const designs = new Map();
+  for (const declaration of designDeclarations) {
+    if (styles.has(declaration.name) || idStyles.has(declaration.name)) throw new LumaError(`There is already a style or design named '${declaration.name}'.`, declaration.line);
+    const { semantic, style } = designStyle(declaration.values, { ...declaration, context }, theme);
+    designs.set(declaration.name, semantic);
+    styles.set(declaration.name, style);
+  }
   const screens = program.statements.filter((statement) => statement.type === "screen");
   if (screens.length === 0) throw new LumaError("An app needs at least one screen.", declaration.line);
   const names = new Set();
@@ -834,7 +936,7 @@ function appDefinition(source, storage = null, data = null) {
   for (const screen of screens) {
     if (names.has(screen.name)) throw new LumaError(`There is already a screen named '${screen.name}'.`, screen.line);
     names.add(screen.name);
-    validateVisualElements(screen.body, styles, animations, ids);
+    validateVisualElements(screen.body, styles, animations, components, ids);
   }
   for (const id of idStyles.keys()) {
     if (!ids.has(id)) throw new LumaError(`There is no element with id '${id}' for this targeted style.`, program.statements.find((statement) => statement.type === "style" && statement.targetId === id)?.line);
@@ -856,10 +958,11 @@ function appDefinition(source, storage = null, data = null) {
       if (element.type === "button") validateActionRequests(element.actions);
       else if (element.type === "layout" || element.type === "for") verifyButtons(element.body);
       else if (element.type === "if") { verifyButtons(element.then); verifyButtons(element.otherwise); }
+      else if (element.type === "use") verifyButtons(components.get(element.name).body);
     });
     verifyButtons(screen.body);
   }
-  return { name, variables, functions, actions, apis: apiSources, stateNames, rememberedNames, dataNames, dataSources, screens, theme, styles, idStyles, animations, storage, storageKey, data };
+  return { name, variables, functions, actions, apis: apiSources, components, stateNames, rememberedNames, dataNames, dataSources, screens, theme, styles, designs, idStyles, animations, storage, storageKey, data };
 }
 
 function styleFor(element, styles, idStyles) {
@@ -872,11 +975,11 @@ function visualFor(element, styles, idStyles, animations) {
   return visual;
 }
 
-function renderElements(elements, context, stateNames, styles, idStyles, animations) {
+function renderElements(elements, context, stateNames, styles, idStyles, animations, components) {
   const rendered = [];
   for (const element of elements) {
     if (element.type === "if") {
-      rendered.push(...renderElements(evaluate(element.condition, context, element.line) ? element.then : element.otherwise, context, stateNames, styles, idStyles, animations));
+      rendered.push(...renderElements(evaluate(element.condition, context, element.line) ? element.then : element.otherwise, context, stateNames, styles, idStyles, animations, components));
       continue;
     }
     if (element.type === "for") {
@@ -885,12 +988,17 @@ function renderElements(elements, context, stateNames, styles, idStyles, animati
       for (const value of values) {
         const loopVariables = new Map(context.variables);
         loopVariables.set(element.name, value);
-        rendered.push(...renderElements(element.body, { ...context, variables: loopVariables }, stateNames, styles, idStyles, animations));
+        rendered.push(...renderElements(element.body, { ...context, variables: loopVariables }, stateNames, styles, idStyles, animations, components));
       }
       continue;
     }
+    if (element.type === "use") {
+      const used = componentContext(element, components, context);
+      rendered.push(...renderElements(used.component.body, used.context, stateNames, styles, idStyles, animations, components));
+      continue;
+    }
     if (element.type === "layout") {
-      rendered.push({ type: "layout", layout: element.layout, ...visualFor(element, styles, idStyles, animations), children: renderElements(element.body, context, stateNames, styles, idStyles, animations) });
+      rendered.push({ type: "layout", layout: element.layout, ...visualFor(element, styles, idStyles, animations), children: renderElements(element.body, context, stateNames, styles, idStyles, animations, components) });
       continue;
     }
     if (["title", "heading", "subtitle", "text", "paragraph", "label", "caption", "quote", "code", "badge", "icon"].includes(element.type)) {
@@ -969,7 +1077,7 @@ function renderElements(elements, context, stateNames, styles, idStyles, animati
 }
 
 function renderScreen(screen, definition) {
-  return { name: screen.name, elements: renderElements(screen.body, contextFor(definition.variables, definition.functions), definition.stateNames, definition.styles, definition.idStyles, definition.animations) };
+  return { name: screen.name, elements: renderElements(screen.body, contextFor(definition.variables, definition.functions), definition.stateNames, definition.styles, definition.idStyles, definition.animations, definition.components) };
 }
 
 function stateSnapshot(variables, stateNames) {
@@ -978,13 +1086,13 @@ function stateSnapshot(variables, stateNames) {
 
 function buildApp(source, options = {}) {
   const definition = appDefinition(source, options.storage, options.data);
-  return { name: definition.name, state: stateSnapshot(definition.variables, definition.stateNames), remembered: [...definition.rememberedNames], data: [...definition.dataNames], apis: Object.fromEntries(definition.apis), theme: definition.theme, styles: Object.fromEntries(definition.styles), idStyles: Object.fromEntries(definition.idStyles), animations: Object.fromEntries(definition.animations), screens: definition.screens.map((screen) => renderScreen(screen, definition)) };
+  return { name: definition.name, state: stateSnapshot(definition.variables, definition.stateNames), remembered: [...definition.rememberedNames], data: [...definition.dataNames], apis: Object.fromEntries(definition.apis), theme: definition.theme, styles: Object.fromEntries(definition.styles), designs: Object.fromEntries(definition.designs), idStyles: Object.fromEntries(definition.idStyles), animations: Object.fromEntries(definition.animations), screens: definition.screens.map((screen) => renderScreen(screen, definition)) };
 }
 
-function findInteractive(elements, type, match, context) {
+function findInteractive(elements, type, match, context, components) {
   for (const element of elements) {
     if (element.type === "if") {
-      const result = findInteractive(evaluate(element.condition, context, element.line) ? element.then : element.otherwise, type, match, context);
+      const result = findInteractive(evaluate(element.condition, context, element.line) ? element.then : element.otherwise, type, match, context, components);
       if (result) return result;
       continue;
     }
@@ -994,13 +1102,19 @@ function findInteractive(elements, type, match, context) {
       for (const value of values) {
         const variables = new Map(context.variables);
         variables.set(element.name, value);
-        const result = findInteractive(element.body, type, match, { ...context, variables });
+        const result = findInteractive(element.body, type, match, { ...context, variables }, components);
         if (result) return result;
       }
       continue;
     }
     if (element.type === "layout") {
-      const result = findInteractive(element.body, type, match, context);
+      const result = findInteractive(element.body, type, match, context, components);
+      if (result) return result;
+      continue;
+    }
+    if (element.type === "use") {
+      const used = componentContext(element, components, context);
+      const result = findInteractive(used.component.body, type, match, used.context, components);
       if (result) return result;
       continue;
     }
@@ -1025,7 +1139,7 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
     if (definition.dataNames.has(name) && definition.data?.write) definition.data.write(definition.dataSources.get(name), value);
   }
   function view() {
-    return { name: definition.name, state: stateSnapshot(definition.variables, definition.stateNames), remembered: [...definition.rememberedNames], data: [...definition.dataNames], apis: Object.fromEntries(definition.apis), theme: definition.theme, animations: Object.fromEntries(definition.animations), screen: renderScreen(currentScreen, definition) };
+    return { name: definition.name, state: stateSnapshot(definition.variables, definition.stateNames), remembered: [...definition.rememberedNames], data: [...definition.dataNames], apis: Object.fromEntries(definition.apis), theme: definition.theme, designs: Object.fromEntries(definition.designs), animations: Object.fromEntries(definition.animations), screen: renderScreen(currentScreen, definition) };
   }
   function enteredValue(element, value) {
     const inputType = element.type === "slider" ? "slider" : element.inputType;
@@ -1052,11 +1166,11 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
     return value;
   }
   function inputOnScreen(state) {
-    return findInteractive(currentScreen.body, "input", (element) => element.state === state, context())
-      ?? findInteractive(currentScreen.body, "slider", (element) => element.state === state, context());
+    return findInteractive(currentScreen.body, "input", (element) => element.state === state, context(), definition.components)
+      ?? findInteractive(currentScreen.body, "slider", (element) => element.state === state, context(), definition.components);
   }
   function choose(state, option) {
-    const found = findInteractive(currentScreen.body, "choice", (element) => element.state === state, context());
+    const found = findInteractive(currentScreen.body, "choice", (element) => element.state === state, context(), definition.components);
     if (!found) throw new LumaError(`The current screen does not offer a choice named '${state}'.`);
     const { element: choice } = found;
     if (!choice.options.map((item) => item.value).includes(option)) throw new LumaError(`'${option}' is not an option for '${state}'.`, choice.line);
@@ -1071,7 +1185,7 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
     return view();
   }
   function toggle(state) {
-    const found = findInteractive(currentScreen.body, "toggle", (element) => element.state === state, context());
+    const found = findInteractive(currentScreen.body, "toggle", (element) => element.state === state, context(), definition.components);
     if (!found) throw new LumaError(`The current screen does not offer a toggle named '${state}'.`);
     const { element } = found;
     const current = definition.variables.get(state);
@@ -1087,7 +1201,7 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
         executionContext.variables.set(action.name, value);
         continue;
       }
-      if (action.type === "let") {
+      if (action.type === "let" || action.type === "value") {
         executionContext.variables.set(action.name, evaluate(action.value, executionContext, action.line));
         continue;
       }
@@ -1120,18 +1234,18 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
         currentScreen = target;
         continue;
       }
-      throw new LumaError("An action can be 'set', 'show', 'if', 'let', 'do', 'request', or 'go'.", action.line);
+      throw new LumaError("An action can be 'set', 'show', 'if', 'value', 'let', 'do', 'request', or 'go'.", action.line);
     }
   }
   function press(label) {
-    const found = findInteractive(currentScreen.body, "button", (element, buttonContext) => String(evaluate(element.label, buttonContext, element.line)) === label, context());
+    const found = findInteractive(currentScreen.body, "button", (element, buttonContext) => String(evaluate(element.label, buttonContext, element.line)) === label, context(), definition.components);
     if (!found) throw new LumaError(`The current screen has no button labelled '${label}'.`);
     runActions(found.element.actions, found.context);
     return view();
   }
   function byId(id, type) {
     const types = Array.isArray(type) ? type : [type];
-    const found = types.map((candidate) => findInteractive(currentScreen.body, candidate, (element) => element.id === id, context())).find(Boolean);
+    const found = types.map((candidate) => findInteractive(currentScreen.body, candidate, (element) => element.id === id, context(), definition.components)).find(Boolean);
     if (!found) throw new LumaError(`The current screen has no ${types.join(" or ")} with id '${id}'.`);
     return found;
   }
@@ -1166,7 +1280,7 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
         executionContext.variables.set(action.name, value);
         continue;
       }
-      if (action.type === "let") {
+      if (action.type === "let" || action.type === "value") {
         executionContext.variables.set(action.name, evaluate(action.value, executionContext, action.line));
         continue;
       }
@@ -1203,11 +1317,11 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
         currentScreen = target;
         continue;
       }
-      throw new LumaError("An action can be 'set', 'show', 'if', 'let', 'do', 'request', or 'go'.", action.line);
+      throw new LumaError("An action can be 'set', 'show', 'if', 'value', 'let', 'do', 'request', or 'go'.", action.line);
     }
   }
   async function pressAsync(label) {
-    const found = findInteractive(currentScreen.body, "button", (element, buttonContext) => String(evaluate(element.label, buttonContext, element.line)) === label, context());
+    const found = findInteractive(currentScreen.body, "button", (element, buttonContext) => String(evaluate(element.label, buttonContext, element.line)) === label, context(), definition.components);
     if (!found) throw new LumaError(`The current screen has no button labelled '${label}'.`);
     await runActionsAsync(found.element.actions, found.context);
     return view();
@@ -1714,7 +1828,7 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
         });
       }
     } else if (element.type === "button") {
-      const secondary = element.role === "secondary";
+      const secondary = element.role === "secondary" || ["secondary", "quiet"].includes(node.own.intent);
       fillBox(node, { ...style, surface: secondary ? style.surface : style.accent, outline: secondary ? style.outline : style.accent }, secondary ? style.surface : style.accent);
       context.font = `${node.own.font_weight ?? 700} ${node.own.font_size ?? 15}px ${FONTS[style.font] ?? FONTS.system}`;
       context.fillStyle = secondary ? style.text : style.accent_text; context.textAlign = "center"; context.textBaseline = "middle";
@@ -1818,7 +1932,7 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
 globalThis.LumaRuntime = Object.freeze({ LumaError, parse, buildApp, createAppRuntime, previewApp, mountLumaApp });
 
 const LUMA_PLUGIN_VERSION = "1.0.0";
-const LUMA_LANGUAGE_VERSION = "0.5";
+const LUMA_LANGUAGE_VERSION = "0.6";
 const LUMA_POLL_INTERVAL = 160;
 const LUMA_RENDER_DELAY = 320;
 
