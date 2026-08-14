@@ -1,6 +1,6 @@
 /**
  * Luma Language Support for All-In Studio
- * Generated from the Luma 0.5 runtime. Do not edit the embedded runtime by hand.
+ * Generated from the Luma 0.7 runtime. Do not edit the embedded runtime by hand.
  */
 class LumaError extends Error {
   constructor(message, line) {
@@ -387,7 +387,7 @@ function parse(source) {
       const args = componentUse[2] === undefined || !componentUse[2].trim() ? [] : parseExpression(`[${componentUse[2]}]`, current.line).values;
       return { type: "use", name: componentUse[1], args, line: current.line };
     }
-    const layout = content.match(/^(column|row|grid|card|form|section|header|footer|nav|aside|hero|overlay)(.*?)\s*:\s*$/);
+    const layout = content.match(/^(column|row|grid|card|form|section|header|footer|nav|aside|hero|overlay|conversation)(.*?)\s*:\s*$/);
     if (layout) {
       const decorators = visualDecorators(`layout${layout[2]}`, current.line);
       if (decorators.source !== "layout") throw new LumaError("After a layout name, use 'using style_name', 'id element_name', or 'animate animation_name'.", current.line);
@@ -432,6 +432,22 @@ function parse(source) {
       const decorators = visualDecorators(contentElement[2], current.line);
       return { type: contentElement[1], value: valueExpression(decorators.source, currentIndent, current.line), role: decorators.role, style: decorators.style, id: decorators.id, animation: decorators.animation, line: current.line };
     }
+    const message = content.match(/^message\s+(.+)$/);
+    if (message) {
+      const decorators = visualDecorators(message[1], current.line);
+      const parts = decorators.source.match(/^(.+?)\s+from\s+(.+?)(?:\s+side\s+(.+))?$/);
+      if (!parts) throw new LumaError('A message looks like \'message "Hello" from "Luma" side "theirs"\'.', current.line);
+      return { type: "message", content: valueExpression(parts[1], currentIndent, current.line), author: valueExpression(parts[2], currentIndent, current.line), side: parts[3] ? valueExpression(parts[3], currentIndent, current.line) : { type: "literal", value: "theirs" }, role: decorators.role, style: decorators.style, id: decorators.id, animation: decorators.animation, line: current.line };
+    }
+    const composer = content.match(/^composer\s+([A-Za-z_][A-Za-z0-9_]*)\s+(.+)\s*:\s*$/);
+    if (composer) {
+      const decorators = visualDecorators(composer[2], current.line);
+      if (decorators.role) throw new LumaError("A composer can use a style, ID, or animation, but not an 'as' role.", current.line);
+      const label = valueExpression(decorators.source, currentIndent, current.line);
+      const body = block(requiredChildIndent(currentIndent));
+      if (body.length !== 1 || body[0].type !== "button" || body[0].event !== "send") throw new LumaError('A composer needs one indented send button, such as \'send "Send":\'.', current.line);
+      return { type: "composer", inputType: "textarea", state: composer[1], label, send: body[0], style: decorators.style, id: decorators.id, animation: decorators.animation, line: current.line };
+    }
     const input = content.match(/^(input|textarea|number|date|email|password|search|url|phone|color|time)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(.+)$/);
     if (input) {
       const decorators = visualDecorators(input[3], current.line);
@@ -463,6 +479,11 @@ function parse(source) {
     if (button) {
       const decorators = visualDecorators(button[1], current.line);
       return { type: "button", label: valueExpression(decorators.source, currentIndent, current.line), role: decorators.role ?? "primary", style: decorators.style, id: decorators.id, animation: decorators.animation, actions: block(requiredChildIndent(currentIndent)), line: current.line };
+    }
+    const send = content.match(/^send\s+(.+)\s*:\s*$/);
+    if (send) {
+      const decorators = visualDecorators(send[1], current.line);
+      return { type: "button", event: "send", label: valueExpression(decorators.source, currentIndent, current.line), role: decorators.role ?? "primary", style: decorators.style, id: decorators.id, animation: decorators.animation, actions: block(requiredChildIndent(currentIndent)), line: current.line };
     }
     const submit = content.match(/^submit\s+(.+)\s*:\s*$/);
     if (submit) {
@@ -956,6 +977,7 @@ function appDefinition(source, storage = null, data = null) {
   for (const screen of screens) {
     const verifyButtons = (elements) => elements.forEach((element) => {
       if (element.type === "button") validateActionRequests(element.actions);
+      else if (element.type === "composer") validateActionRequests(element.send.actions);
       else if (element.type === "layout" || element.type === "for") verifyButtons(element.body);
       else if (element.type === "if") { verifyButtons(element.then); verifyButtons(element.otherwise); }
       else if (element.type === "use") verifyButtons(components.get(element.name).body);
@@ -1001,6 +1023,15 @@ function renderElements(elements, context, stateNames, styles, idStyles, animati
       rendered.push({ type: "layout", layout: element.layout, ...visualFor(element, styles, idStyles, animations), children: renderElements(element.body, context, stateNames, styles, idStyles, animations, components) });
       continue;
     }
+    if (element.type === "message") {
+      const content = evaluate(element.content, context, element.line);
+      const author = evaluate(element.author, context, element.line);
+      const side = evaluate(element.side, context, element.line);
+      if (![content, author, side].every((value) => typeof value === "string")) throw new LumaError("A message needs text for its content, author, and side.", element.line);
+      if (!["mine", "theirs", "system"].includes(side)) throw new LumaError("A message side can be mine, theirs, or system.", element.line);
+      rendered.push({ type: "message", content, author, side, role: element.role, ...visualFor(element, styles, idStyles, animations) });
+      continue;
+    }
     if (["title", "heading", "subtitle", "text", "paragraph", "label", "caption", "quote", "code", "badge", "icon"].includes(element.type)) {
       rendered.push({ type: element.type, content: String(evaluate(element.value, context, element.line)), role: element.role, ...visualFor(element, styles, idStyles, animations) });
       continue;
@@ -1041,6 +1072,13 @@ function renderElements(elements, context, stateNames, styles, idStyles, animati
       if (element.inputType === "number" && typeof current !== "number") throw new LumaError(`The number input '${element.state}' needs number state.`, element.line);
       if (element.inputType !== "number" && typeof current !== "string") throw new LumaError(`The ${element.inputType} input '${element.state}' needs text state.`, element.line);
       rendered.push({ type: "input", inputType: element.inputType, state: element.state, label: String(evaluate(element.label, context, element.line)), current, ...visualFor(element, styles, idStyles, animations) });
+      continue;
+    }
+    if (element.type === "composer") {
+      if (!stateNames.has(element.state)) throw new LumaError(`The composer '${element.state}' needs a matching state value.`, element.line);
+      const current = readVariable(context.variables, element.state, element.line);
+      if (typeof current !== "string") throw new LumaError(`The composer '${element.state}' needs text state.`, element.line);
+      rendered.push({ type: "composer", inputType: "textarea", state: element.state, label: String(evaluate(element.label, context, element.line)), current, send: { label: String(evaluate(element.send.label, context, element.send.line)), actions: element.send.actions.map((action) => action.type), style: styleFor(element.send, styles, idStyles) }, ...visualFor(element, styles, idStyles, animations) });
       continue;
     }
     if (element.type === "slider") {
@@ -1167,6 +1205,7 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
   }
   function inputOnScreen(state) {
     return findInteractive(currentScreen.body, "input", (element) => element.state === state, context(), definition.components)
+      ?? findInteractive(currentScreen.body, "composer", (element) => element.state === state, context(), definition.components)
       ?? findInteractive(currentScreen.body, "slider", (element) => element.state === state, context(), definition.components);
   }
   function choose(state, option) {
@@ -1255,7 +1294,7 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
     return view();
   }
   function enterId(id, value) {
-    const found = byId(id, ["input", "slider"]);
+    const found = byId(id, ["input", "composer", "slider"]);
     updateState(found.element.state, enteredValue(found.element, value), found.element.line);
     return view();
   }
@@ -1270,6 +1309,17 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
     const current = definition.variables.get(found.element.state);
     if (typeof current !== "boolean") throw new LumaError(`The toggle '${found.element.state}' needs true or false state.`, found.element.line);
     updateState(found.element.state, !current, found.element.line);
+    return view();
+  }
+  function submitComposer(state) {
+    const found = findInteractive(currentScreen.body, "composer", (element) => element.state === state, context(), definition.components);
+    if (!found) throw new LumaError(`The current screen has no composer named '${state}'.`);
+    runActions(found.element.send.actions, found.context);
+    return view();
+  }
+  function submitComposerId(id) {
+    const found = byId(id, "composer");
+    runActions(found.element.send.actions, found.context);
     return view();
   }
   async function runActionsAsync(actions, executionContext = context(), callStack = []) {
@@ -1331,7 +1381,7 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
     await runActionsAsync(found.element.actions, found.context);
     return view();
   }
-  return { choose, enter, toggle, press, pressAsync, chooseId, enterId, toggleId, pressId, pressIdAsync, view };
+  return { choose, enter, toggle, press, pressAsync, chooseId, enterId, toggleId, pressId, pressIdAsync, submitComposer, submitComposerId, view };
 }
 
 function previewElements(elements, lines, indent) {
@@ -1346,6 +1396,8 @@ function previewElements(elements, lines, indent) {
     else if (element.type === "input") lines.push(`${prefix}${element.label}: [${element.current}]`);
     else if (element.type === "slider") lines.push(`${prefix}${element.label}: [${element.current} from ${element.min} to ${element.max}]`);
     else if (element.type === "toggle") lines.push(`${prefix}${element.label}: [${element.current ? "on" : "off"}]`);
+    else if (element.type === "message") lines.push(`${prefix}${element.author}: ${element.content}`);
+    else if (element.type === "composer") lines.push(`${prefix}[ ${element.label}: ${element.current} | ${element.send.label} ]`);
     else if (element.type === "choice") {
       lines.push(`${prefix}Choose ${element.state} (current: ${element.current})`);
       for (const option of element.options) lines.push(`${prefix}  ( ) ${option}`);
@@ -1407,7 +1459,7 @@ const SEMANTIC_TEXT = {
   label: [12, 720], caption: [13, 500], quote: [21, 520], code: [14, 500], badge: [12, 760], icon: [28, 500], link: [16, 650],
 };
 const ICONS = { sparkles: "✦", star: "★", check: "✓", heart: "♥", arrow: "→", plus: "+", menu: "☰", info: "i", warning: "!", user: "●" };
-const SURFACE_LAYOUTS = new Set(["card", "hero", "header", "footer", "nav", "aside"]);
+const SURFACE_LAYOUTS = new Set(["card", "hero", "header", "footer", "nav", "aside", "conversation"]);
 
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 function lerp(from, to, amount) { return from + (to - from) * amount; }
@@ -1433,6 +1485,19 @@ function edgeValues(style, name, fallback = 0) {
     bottom: style[`${name}_bottom`] ?? vertical,
     left: style[`${name}_left`] ?? horizontal,
   };
+}
+
+function withAlpha(color, alpha) {
+  const rgb = hexColor(color);
+  return rgb ? `rgba(${rgb.join(", ")}, ${alpha})` : color;
+}
+
+function layoutDefaults(layout, parent) {
+  if (layout === "card") return { surface: parent.surface, outline: parent.outline, outline_width: 1, radius: Math.max(16, parent.radius ?? 16), shadow: "small" };
+  if (layout === "hero") return { surface: parent.surface, outline: parent.outline, outline_width: 1, radius: Math.max(22, parent.radius ?? 16), shadow: "medium" };
+  if (layout === "header" || layout === "footer" || layout === "nav") return { surface: parent.surface, outline: parent.outline, outline_width: 1, radius: Math.max(14, parent.radius ?? 14) };
+  if (layout === "conversation") return { surface: parent.surface, outline: parent.outline, outline_width: 1, radius: Math.max(20, parent.radius ?? 16), shadow: "small" };
+  return {};
 }
 
 function inheritedStyle(parent, current) {
@@ -1572,7 +1637,7 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
 
   function layoutElement(element, x, y, availableWidth, parentStyle, key) {
     const own = element.style ?? {};
-    const style = { ...parentStyle, ...own };
+    const style = { ...parentStyle, ...layoutDefaults(element.layout, parentStyle), ...own };
     const margin = edgeValues(own, "margin");
     let width = own.width ?? Math.max(1, availableWidth - margin.left - margin.right);
     if (own.min_width !== undefined) width = Math.max(width, own.min_width);
@@ -1603,6 +1668,20 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
       node.appearance = appearance;
       node.padding = padding;
       node.height = padding.top + node.lines.length * appearance.lineHeight + padding.bottom;
+    } else if (element.type === "message") {
+      width = own.width ?? Math.min(width, Math.max(180, availableWidth * 0.78));
+      node.width = width; node.totalWidth = width + margin.left + margin.right;
+      if (element.side === "mine") node.x = x + availableWidth - margin.right - width;
+      const padding = edgeValues(own, "padding", 14);
+      if (own.padding === undefined && own.padding_x === undefined) { padding.left = 16; padding.right = 16; }
+      if (own.padding === undefined && own.padding_y === undefined) { padding.top = 12; padding.bottom = 12; }
+      context.font = `650 11px ${FONTS[style.font] ?? FONTS.system}`;
+      node.authorLines = wrappedLines(context, element.author, width - padding.left - padding.right);
+      context.font = `500 ${own.font_size ?? 15}px ${FONTS[style.font] ?? FONTS.system}`;
+      node.lines = wrappedLines(context, element.content, width - padding.left - padding.right);
+      node.padding = padding;
+      node.messageFont = `500 ${own.font_size ?? 15}px ${FONTS[style.font] ?? FONTS.system}`;
+      node.height = padding.top + node.authorLines.length * 16 + node.lines.length * 22 + padding.bottom;
     } else if (element.type === "image") {
       node.height = own.height ?? width / (own.aspect_ratio ?? 16 / 9);
     } else if (element.type === "progress") {
@@ -1615,6 +1694,10 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
       const fieldHeight = element.inputType === "textarea" ? 112 : 52;
       node.labelHeight = 22;
       node.height = node.labelHeight + (own.height ?? fieldHeight);
+    } else if (element.type === "composer") {
+      context.font = `750 14px ${FONTS[style.font] ?? FONTS.system}`;
+      node.sendWidth = Math.max(90, context.measureText(element.send.label).width + 36);
+      node.height = own.height ?? 68;
     } else if (element.type === "slider") {
       node.labelHeight = 22; node.height = node.labelHeight + (own.height ?? 50);
     } else if (element.type === "toggle") {
@@ -1740,6 +1823,49 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
     }
   }
 
+  function drawMessage(node, style) {
+    const { element, padding } = node;
+    const mine = element.side === "mine";
+    const system = element.side === "system";
+    const bubble = system
+      ? { ...style, surface: withAlpha(style.accent, 0.10), outline: withAlpha(style.accent, 0.18), radius: 16, shadow: "none" }
+      : mine
+        ? { ...style, surface: style.accent, outline: style.accent, text: style.accent_text, muted: withAlpha(style.accent_text, 0.76), radius: 20, shadow: "small" }
+        : { ...style, surface: node.own.surface ?? style.surface, outline: node.own.outline ?? style.outline, radius: 20, shadow: node.own.shadow ?? "small" };
+    fillBox(node, bubble, bubble.surface);
+    context.textBaseline = "alphabetic";
+    context.font = `650 11px ${FONTS[style.font] ?? FONTS.system}`;
+    context.fillStyle = bubble.muted;
+    node.authorLines.forEach((line, index) => context.fillText(line, node.x + padding.left, node.y + padding.top + 11 + index * 16));
+    context.font = node.messageFont;
+    context.fillStyle = bubble.text;
+    const contentTop = node.y + padding.top + node.authorLines.length * 16 + 4;
+    node.lines.forEach((line, index) => context.fillText(line, node.x + padding.left, contentTop + 15 + index * 22));
+  }
+
+  function drawComposer(node, style) {
+    const { element } = node;
+    const padding = 7;
+    const send = { x: node.x + node.width - node.sendWidth - padding, y: node.y + padding, width: node.sendWidth, height: node.height - padding * 2 };
+    const field = { x: node.x + padding, y: node.y + padding, width: Math.max(80, node.width - node.sendWidth - padding * 3), height: node.height - padding * 2 };
+    const focused = activeInput?.key === node.key;
+    fillBox(field, { ...style, surface: node.own.surface ?? style.surface, outline: focused ? (node.own.focus_outline ?? style.accent) : style.outline, radius: 16, shadow: "none" }, style.surface);
+    const value = focused ? drafts.get(node.key) : element.current;
+    context.font = `500 15px ${FONTS[style.font] ?? FONTS.system}`;
+    context.fillStyle = value ? style.text : style.muted;
+    const lines = wrappedLines(context, value || element.label, field.width - 28).slice(0, 2);
+    lines.forEach((line, index) => context.fillText(line, field.x + 14, field.y + 24 + index * 18));
+    const sendStyle = { ...style, ...element.send.style, surface: element.send.style.surface ?? style.accent, outline: element.send.style.outline ?? style.accent, radius: 16, shadow: "small" };
+    fillBox(send, sendStyle, style.accent);
+    context.font = `750 14px ${FONTS[style.font] ?? FONTS.system}`;
+    context.fillStyle = sendStyle.accent_text ?? style.accent_text;
+    context.textAlign = "center"; context.textBaseline = "middle";
+    context.fillText(element.send.label, send.x + send.width / 2, send.y + send.height / 2);
+    context.textAlign = "left"; context.textBaseline = "alphabetic";
+    zones.push({ kind: "input", key: node.key, x: field.x, y: field.y, width: field.width, height: field.height, element });
+    zones.push({ kind: "composer_send", key: `${node.key}.send`, x: send.x, y: send.y, width: send.width, height: send.height, element });
+  }
+
   function drawNode(node, now, theme) {
     const style = stateStyle(node, now);
     const motion = motionFor(node, now, theme);
@@ -1757,6 +1883,7 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
       if (node.paintSurface) fillBox(node, style, style.surface, now);
       for (const child of node.children) drawNode(child, now, theme);
     } else if (["title", "heading", "subtitle", "text", "paragraph", "label", "caption", "quote", "code", "badge", "icon", "link"].includes(element.type)) drawTextNode(node, style);
+    else if (element.type === "message") drawMessage(node, style);
     else if (element.type === "divider") {
       context.strokeStyle = style.outline; context.lineWidth = node.height;
       context.beginPath(); context.moveTo(node.x, node.y + node.height / 2); context.lineTo(node.x + node.width, node.y + node.height / 2); context.stroke();
@@ -1781,6 +1908,8 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
       const amount = clamp((element.value - element.min) / (element.max - element.min), 0, 1);
       const progressNode = { ...node, width: node.width * amount };
       fillBox(progressNode, { ...style, surface: style.accent, surface_end: node.own.surface_end, outline_width: 0, shadow: "none" }, style.accent);
+    } else if (element.type === "composer") {
+      drawComposer(node, style);
     } else if (element.type === "input" || element.type === "slider") {
       context.font = `700 12px ${FONTS[style.font] ?? FONTS.system}`; context.fillStyle = style.muted;
       context.fillText(element.label, node.x, node.y + 13);
@@ -1829,7 +1958,7 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
       }
     } else if (element.type === "button") {
       const secondary = element.role === "secondary" || ["secondary", "quiet"].includes(node.own.intent);
-      fillBox(node, { ...style, surface: secondary ? style.surface : style.accent, outline: secondary ? style.outline : style.accent }, secondary ? style.surface : style.accent);
+      fillBox(node, { ...style, surface: secondary ? style.surface : style.accent, outline: secondary ? style.outline : style.accent, radius: node.own.radius ?? Math.max(14, style.radius ?? 14), shadow: node.own.shadow ?? "small" }, secondary ? style.surface : style.accent);
       context.font = `${node.own.font_weight ?? 700} ${node.own.font_size ?? 15}px ${FONTS[style.font] ?? FONTS.system}`;
       context.fillStyle = secondary ? style.text : style.accent_text; context.textAlign = "center"; context.textBaseline = "middle";
       context.fillText(element.label, node.x + node.width / 2, node.y + node.height / 2); context.textAlign = "left"; context.textBaseline = "alphabetic";
@@ -1856,6 +1985,9 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
     const wantedHeight = Math.max(240, Math.ceil(outer + laidOut.height + outer + messageHeight));
     if (canvas.height !== wantedHeight) canvas.height = wantedHeight;
     context.fillStyle = theme.canvas; context.fillRect(0, 0, canvas.width, canvas.height);
+    const glow = context.createRadialGradient(canvas.width * 0.82, 0, 0, canvas.width * 0.82, 0, canvas.width * 0.7);
+    glow.addColorStop(0, withAlpha(theme.accent, 0.12)); glow.addColorStop(1, withAlpha(theme.canvas, 0));
+    context.fillStyle = glow; context.fillRect(0, 0, canvas.width, canvas.height);
     zones = [];
     for (const node of laidOut.children) drawNode(node, now, theme);
     if (message) { context.font = `600 13px ${FONTS[theme.font] ?? FONTS.system}`; context.fillStyle = theme.muted; context.fillText(message, contentX, canvas.height - outer); }
@@ -1896,6 +2028,7 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
         element.id ? runtime.chooseId(element.id, next) : runtime.choose(element.state, next);
       } else if (zone.kind === "toggle") element.id ? runtime.toggleId(element.id) : runtime.toggle(element.state);
       else if (zone.kind === "button") element.id ? await runtime.pressIdAsync(element.id) : await runtime.pressAsync(element.label);
+      else if (zone.kind === "composer_send") element.id ? runtime.submitComposerId(element.id) : runtime.submitComposer(element.state);
       else if (zone.kind === "link") window.open(element.target, "_blank", "noopener,noreferrer");
       message = ""; animationEpoch = performance.now();
     } catch (error) { message = `Luma: ${error.message}`; }
@@ -1931,8 +2064,8 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
 
 globalThis.LumaRuntime = Object.freeze({ LumaError, parse, buildApp, createAppRuntime, previewApp, mountLumaApp });
 
-const LUMA_PLUGIN_VERSION = "1.0.0";
-const LUMA_LANGUAGE_VERSION = "0.6";
+const LUMA_PLUGIN_VERSION = "1.2.0";
+const LUMA_LANGUAGE_VERSION = "0.7";
 const LUMA_POLL_INTERVAL = 160;
 const LUMA_RENDER_DELAY = 320;
 
