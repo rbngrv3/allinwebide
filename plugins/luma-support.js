@@ -1,6 +1,6 @@
 /**
  * Luma Language Support for All-In Studio
- * Generated from the Luma 0.7 runtime. Do not edit the embedded runtime by hand.
+ * Generated from the Luma 1.1 runtime. Do not edit the embedded runtime by hand.
  */
 class LumaError extends Error {
   constructor(message, line) {
@@ -37,7 +37,7 @@ const NUMBER_STYLE_SETTINGS = new Set([
   "padding", "padding_x", "padding_y", "padding_top", "padding_right", "padding_bottom", "padding_left",
   "margin", "margin_x", "margin_y", "margin_top", "margin_right", "margin_bottom", "margin_left",
   "outline_width", "font_size", "font_weight", "line_height", "letter_spacing", "opacity", "scale", "rotation",
-  "columns", "aspect_ratio", "hover_scale", "hover_lift", "press_scale", "transition",
+  "columns", "mobile_columns", "aspect_ratio", "hover_scale", "hover_lift", "press_scale", "transition", "surface_alpha",
 ]);
 const TEXT_STYLE_SETTINGS = new Set(["gradient", "shadow", "font", "text_align", "align", "justify", "overflow"]);
 const BOOLEAN_STYLE_SETTINGS = new Set(["wrap"]);
@@ -52,6 +52,18 @@ const DESIGN_CHOICES = {
   motion: ["none", "gentle", "spring"],
   mood: ["calm", "vivid", "midnight", "warm"],
   density: ["compact", "standard", "airy"],
+};
+const STANDARD_LIBRARY_SOURCES = {
+  "luma/core": `
+component empty_state title_text detail_text:
+  panel:
+    icon "sparkles"
+    title title_text
+    caption detail_text
+
+component metric label_text value_text:
+  stat label_text value value_text
+`,
 };
 
 function meaningfulLine(lines, start) {
@@ -243,7 +255,7 @@ function namesFrom(source, line, kind) {
 
 function visualDecorators(source, line, { needsValue = true } = {}) {
   let remaining = source.trim();
-  const decorators = { role: null, style: null, id: null, animation: null };
+  const decorators = { role: null, style: null, id: null, animation: null, required: false };
   const propertyFor = { as: "role", using: "style", id: "id", animate: "animation" };
   while (true) {
     const suffix = remaining.match(/^(.*)\s+(as|using|id|animate)\s+([A-Za-z_][A-Za-z0-9_]*)$/);
@@ -253,6 +265,10 @@ function visualDecorators(source, line, { needsValue = true } = {}) {
     if (decorators[property]) throw new LumaError(`This element already has a '${word}' detail.`, line);
     decorators[property] = name;
     remaining = before.trim();
+  }
+  if (/\s+required$/.test(remaining)) {
+    decorators.required = true;
+    remaining = remaining.replace(/\s+required$/, "").trim();
   }
   if (needsValue && !remaining) throw new LumaError("This element needs a value before its visual details.", line);
   if (!needsValue && remaining) throw new LumaError("After a layout name, use only 'using style_name' or 'id element_name'.", line);
@@ -306,6 +322,23 @@ function parse(source) {
       options.push(option);
     }
     return options;
+  }
+  function tableColumnBlock(expectedIndent) {
+    const columns = [];
+    while (true) {
+      skipEmpty();
+      if (position >= lines.length) break;
+      const current = lines[position];
+      const actualIndent = indentation(current.text);
+      if (actualIndent < expectedIndent) break;
+      if (actualIndent > expectedIndent) throw new LumaError("A table column is indented too far.", current.line);
+      position += 1;
+      const column = current.text.trim().match(/^column\s+(.+?)\s+from\s+(.+)$/);
+      if (!column) throw new LumaError('A table column looks like \'column "Name" from "name"\'.', current.line);
+      columns.push({ label: valueExpression(column[1], actualIndent, current.line), field: valueExpression(column[2], actualIndent, current.line), line: current.line });
+    }
+    if (!columns.length) throw new LumaError("A table needs at least one column.", lines[position - 1]?.line);
+    return columns;
   }
   function completeExpression(source, currentIndent, line) {
     let combined = source;
@@ -367,6 +400,8 @@ function parse(source) {
     if (api) return { type: "api", name: api[1], source: valueExpression(api[2], currentIndent, current.line), line: current.line };
     const app = content.match(/^app\s+(.+)$/);
     if (app) return { type: "app", name: valueExpression(app[1], currentIndent, current.line), line: current.line };
+    const library = content.match(/^library\s+(.+)$/);
+    if (library) return { type: "library", name: valueExpression(library[1], currentIndent, current.line), line: current.line };
     if (content === "theme:") return { type: "theme", values: themeBlock(requiredChildIndent(currentIndent), "theme"), line: current.line };
     const style = content.match(/^style\s+(#?)([A-Za-z_][A-Za-z0-9_]*):$/);
     if (style) return { type: "style", name: style[2], targetId: style[1] ? style[2] : null, values: themeBlock(requiredChildIndent(currentIndent), "style"), line: current.line };
@@ -380,14 +415,20 @@ function parse(source) {
     if (fn) return { type: "function", name: fn[1], parameters: namesFrom(fn[2], current.line, "function"), body: block(requiredChildIndent(currentIndent)), line: current.line };
     const component = content.match(/^component\s+([A-Za-z_][A-Za-z0-9_]*)(.*?)\s*:\s*$/);
     if (component) return { type: "component", name: component[1], parameters: namesFrom(component[2], current.line, "component"), body: block(requiredChildIndent(currentIndent)), line: current.line };
-    const screen = content.match(/^screen\s+([A-Za-z_][A-Za-z0-9_]*):$/);
-    if (screen) return { type: "screen", name: screen[1], body: block(requiredChildIndent(currentIndent)), line: current.line };
+    const screen = content.match(/^screen\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+at\s+(.+?))?\s*:\s*$/);
+    if (screen) return { type: "screen", name: screen[1], route: screen[2] ? valueExpression(screen[2], currentIndent, current.line) : null, body: block(requiredChildIndent(currentIndent)), line: current.line };
     const componentUse = content.match(/^use\s+([A-Za-z_][A-Za-z0-9_]*)(?:\((.*)\))?$/);
     if (componentUse) {
       const args = componentUse[2] === undefined || !componentUse[2].trim() ? [] : parseExpression(`[${componentUse[2]}]`, current.line).values;
       return { type: "use", name: componentUse[1], args, line: current.line };
     }
-    const layout = content.match(/^(column|row|grid|card|form|section|header|footer|nav|aside|hero|overlay|conversation)(.*?)\s*:\s*$/);
+    const table = content.match(/^table\s+(.+?)\s*:\s*$/);
+    if (table) {
+      const decorators = visualDecorators(table[1], current.line);
+      if (decorators.role) throw new LumaError("A table can use a style, ID, or animation, but not an 'as' role.", current.line);
+      return { type: "table", items: valueExpression(decorators.source, currentIndent, current.line), columns: tableColumnBlock(requiredChildIndent(currentIndent)), style: decorators.style, id: decorators.id, animation: decorators.animation, line: current.line };
+    }
+    const layout = content.match(/^(page|stack|column|row|grid|card|panel|form|section|header|footer|nav|toolbar|aside|sidebar|hero|overlay|conversation|list)(.*?)\s*:\s*$/);
     if (layout) {
       const decorators = visualDecorators(`layout${layout[2]}`, current.line);
       if (decorators.source !== "layout") throw new LumaError("After a layout name, use 'using style_name', 'id element_name', or 'animate animation_name'.", current.line);
@@ -432,6 +473,26 @@ function parse(source) {
       const decorators = visualDecorators(contentElement[2], current.line);
       return { type: contentElement[1], value: valueExpression(decorators.source, currentIndent, current.line), role: decorators.role, style: decorators.style, id: decorators.id, animation: decorators.animation, line: current.line };
     }
+    const avatar = content.match(/^avatar\s+(.+)$/);
+    if (avatar) {
+      const decorators = visualDecorators(avatar[1], current.line);
+      if (decorators.role) throw new LumaError("An avatar can use a style, ID, or animation, but not an 'as' role.", current.line);
+      return { type: "avatar", value: valueExpression(decorators.source, currentIndent, current.line), style: decorators.style, id: decorators.id, animation: decorators.animation, line: current.line };
+    }
+    const notice = content.match(/^notice\s+(.+)$/);
+    if (notice) {
+      const decorators = visualDecorators(notice[1], current.line);
+      const parts = decorators.source.match(/^(.+?)\s+kind\s+(.+)$/);
+      if (!parts) throw new LumaError('A notice looks like \'notice "Saved" kind "success"\'.', current.line);
+      return { type: "notice", content: valueExpression(parts[1], currentIndent, current.line), kind: valueExpression(parts[2], currentIndent, current.line), style: decorators.style, id: decorators.id, animation: decorators.animation, line: current.line };
+    }
+    const stat = content.match(/^stat\s+(.+)$/);
+    if (stat) {
+      const decorators = visualDecorators(stat[1], current.line);
+      const parts = decorators.source.match(/^(.+?)\s+value\s+(.+)$/);
+      if (!parts) throw new LumaError('A stat looks like \'stat "Tasks done" value 12\'.', current.line);
+      return { type: "stat", label: valueExpression(parts[1], currentIndent, current.line), value: valueExpression(parts[2], currentIndent, current.line), style: decorators.style, id: decorators.id, animation: decorators.animation, line: current.line };
+    }
     const message = content.match(/^message\s+(.+)$/);
     if (message) {
       const decorators = visualDecorators(message[1], current.line);
@@ -452,7 +513,7 @@ function parse(source) {
     if (input) {
       const decorators = visualDecorators(input[3], current.line);
       if (decorators.role) throw new LumaError("Inputs can use styles and IDs, but not 'as' roles.", current.line);
-      return { type: "input", inputType: input[1], state: input[2], label: valueExpression(decorators.source, currentIndent, current.line), style: decorators.style, id: decorators.id, animation: decorators.animation, line: current.line };
+      return { type: "input", inputType: input[1], state: input[2], label: valueExpression(decorators.source, currentIndent, current.line), required: decorators.required, style: decorators.style, id: decorators.id, animation: decorators.animation, line: current.line };
     }
     const slider = content.match(/^slider\s+([A-Za-z_][A-Za-z0-9_]*)\s+(.+)$/);
     if (slider) {
@@ -499,8 +560,8 @@ function parse(source) {
       const args = actionCall[2] === undefined || !actionCall[2].trim() ? [] : parseExpression(`[${actionCall[2]}]`, current.line).values;
       return { type: "do", action: actionCall[1], args, line: current.line };
     }
-    const request = content.match(/^request\s+([A-Za-z_][A-Za-z0-9_]*)\s+into\s+([A-Za-z_][A-Za-z0-9_]*)$/);
-    if (request) return { type: "request", api: request[1], state: request[2], line: current.line };
+    const request = content.match(/^request\s+([A-Za-z_][A-Za-z0-9_]*)\s+into\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+loading\s+([A-Za-z_][A-Za-z0-9_]*))?(?:\s+error\s+([A-Za-z_][A-Za-z0-9_]*))?$/);
+    if (request) return { type: "request", api: request[1], state: request[2], loading: request[3] ?? null, error: request[4] ?? null, line: current.line };
     const returnValue = content.match(/^return\s+(.+)$/);
     if (returnValue) return { type: "return", value: valueExpression(returnValue[1], currentIndent, current.line), line: current.line };
     const show = content.match(/^show\s+(.+)$/);
@@ -610,6 +671,22 @@ function callBuiltin(name, args, line) {
     if (args.length !== 1 || !isRecord(args[0])) throw new LumaError("fields() needs one record.", line);
     return Object.keys(args[0]);
   }
+  if (["lower", "upper", "trim"].includes(name)) {
+    if (args.length !== 1 || typeof args[0] !== "string") throw new LumaError(`${name}() needs one piece of text.`, line);
+    return name === "lower" ? args[0].toLowerCase() : name === "upper" ? args[0].toUpperCase() : args[0].trim();
+  }
+  if (name === "split") {
+    if (args.length !== 2 || !args.every((value) => typeof value === "string")) throw new LumaError("split() needs text and a separator.", line);
+    return args[0].split(args[1]);
+  }
+  if (name === "join") {
+    if (args.length !== 2 || !Array.isArray(args[0]) || typeof args[1] !== "string") throw new LumaError("join() needs a list and a separator.", line);
+    return args[0].map(String).join(args[1]);
+  }
+  if (name === "sum") {
+    if (args.length !== 1 || !Array.isArray(args[0]) || !args[0].every((value) => typeof value === "number" && Number.isFinite(value))) throw new LumaError("sum() needs one list of numbers.", line);
+    return args[0].reduce((total, value) => total + value, 0);
+  }
   return undefined;
 }
 
@@ -708,9 +785,9 @@ function validateStyleValues(style, declaration) {
     }
     if (TEXT_STYLE_SETTINGS.has(name) && typeof value !== "string") throw new LumaError(`Style setting '${name}' needs text.`, declaration.line);
     if (BOOLEAN_STYLE_SETTINGS.has(name) && typeof value !== "boolean") throw new LumaError(`Style setting '${name}' needs true or false.`, declaration.line);
-    if (["opacity"].includes(name) && (value < 0 || value > 1)) throw new LumaError(`Style setting '${name}' must be between 0 and 1.`, declaration.line);
+    if (["opacity", "surface_alpha"].includes(name) && (value < 0 || value > 1)) throw new LumaError(`Style setting '${name}' must be between 0 and 1.`, declaration.line);
     if (["scale", "hover_scale", "press_scale", "line_height", "aspect_ratio"].includes(name) && value <= 0) throw new LumaError(`Style setting '${name}' must be greater than 0.`, declaration.line);
-    if (name === "columns" && (!Number.isInteger(value) || value < 1)) throw new LumaError("Style setting 'columns' needs a whole number of 1 or more.", declaration.line);
+    if (["columns", "mobile_columns"].includes(name) && (!Number.isInteger(value) || value < 1)) throw new LumaError(`Style setting '${name}' needs a whole number of 1 or more.`, declaration.line);
     if (["gradient", "shadow", "font", "text_align", "align", "justify", "overflow"].includes(name)) {
       const choices = {
         gradient: ["none", "horizontal", "vertical", "diagonal"], shadow: ["none", "small", "medium", "large", "glow"],
@@ -834,7 +911,7 @@ function execute(program, { output = console.log } = {}) {
       if (["let", "value", "state", "remember", "data", "set"].includes(statement.type)) variables.set(statement.name, evaluate(statement.value, context, statement.line));
       else if (statement.type === "show") output(String(evaluate(statement.value, context, statement.line)));
       else if (statement.type === "if") run(evaluate(statement.condition, context, statement.line) ? statement.then : statement.otherwise);
-      else if (["app", "theme", "style", "design", "animation", "api", "screen", "component", "action", "function"].includes(statement.type)) continue;
+      else if (["app", "library", "theme", "style", "design", "animation", "api", "screen", "component", "action", "function"].includes(statement.type)) continue;
       else throw new LumaError(`'${statement.type}' only makes sense inside a visual app.`, statement.line);
     }
   }
@@ -895,6 +972,17 @@ function appDefinition(source, storage = null, data = null) {
   for (const remembered of rememberedNames) {
     if (Object.hasOwn(saved, remembered)) variables.set(remembered, saved[remembered]);
   }
+  const libraries = [];
+  for (const declaration of program.statements.filter((statement) => statement.type === "library")) {
+    const libraryName = evaluate(declaration.name, context, declaration.line);
+    if (typeof libraryName !== "string" || !STANDARD_LIBRARY_SOURCES[libraryName]) throw new LumaError(`There is no built-in Luma library named '${libraryName}'.`, declaration.line);
+    if (libraries.includes(libraryName)) throw new LumaError(`The library '${libraryName}' is already in use.`, declaration.line);
+    libraries.push(libraryName);
+    for (const component of parse(STANDARD_LIBRARY_SOURCES[libraryName]).statements.filter((statement) => statement.type === "component")) {
+      if (components.has(component.name)) throw new LumaError(`The component '${component.name}' already exists, including from '${libraryName}'.`, declaration.line);
+      components.set(component.name, component);
+    }
+  }
   const apiSources = new Map();
   for (const api of apis.values()) {
     const sourceName = evaluate(api.source, context, api.line);
@@ -954,9 +1042,17 @@ function appDefinition(source, storage = null, data = null) {
   if (screens.length === 0) throw new LumaError("An app needs at least one screen.", declaration.line);
   const names = new Set();
   const ids = new Set();
+  const routes = new Map();
+  const usedRoutes = new Set();
   for (const screen of screens) {
     if (names.has(screen.name)) throw new LumaError(`There is already a screen named '${screen.name}'.`, screen.line);
     names.add(screen.name);
+    if (screen.route) {
+      const route = evaluate(screen.route, context, screen.line);
+      if (typeof route !== "string" || !route.startsWith("/")) throw new LumaError(`Screen '${screen.name}' needs a route starting with '/'.`, screen.line);
+      if (usedRoutes.has(route)) throw new LumaError(`There is already a screen at '${route}'.`, screen.line);
+      usedRoutes.add(route); routes.set(screen.name, route);
+    }
     validateVisualElements(screen.body, styles, animations, components, ids);
   }
   for (const id of idStyles.keys()) {
@@ -967,6 +1063,10 @@ function appDefinition(source, storage = null, data = null) {
       if (action.type === "request") {
         if (!apiSources.has(action.api)) throw new LumaError(`There is no API named '${action.api}'.`, action.line);
         if (!stateNames.has(action.state)) throw new LumaError(`'${action.state}' needs state, remember, or data before an API can write into it.`, action.line);
+        if (action.loading && !stateNames.has(action.loading)) throw new LumaError(`'${action.loading}' needs state before it can show API loading.`, action.line);
+        if (action.error && !stateNames.has(action.error)) throw new LumaError(`'${action.error}' needs state before it can show an API error.`, action.line);
+        if (action.loading && typeof readVariable(variables, action.loading, action.line) !== "boolean") throw new LumaError(`'${action.loading}' needs true or false state for API loading.`, action.line);
+        if (action.error && typeof readVariable(variables, action.error, action.line) !== "string") throw new LumaError(`'${action.error}' needs text state for API errors.`, action.line);
       } else if (action.type === "if") {
         validateActionRequests(action.then);
         validateActionRequests(action.otherwise);
@@ -984,7 +1084,7 @@ function appDefinition(source, storage = null, data = null) {
     });
     verifyButtons(screen.body);
   }
-  return { name, variables, functions, actions, apis: apiSources, components, stateNames, rememberedNames, dataNames, dataSources, screens, theme, styles, designs, idStyles, animations, storage, storageKey, data };
+  return { name, variables, functions, actions, apis: apiSources, components, libraries, stateNames, rememberedNames, dataNames, dataSources, screens, routes, theme, styles, designs, idStyles, animations, storage, storageKey, data };
 }
 
 function styleFor(element, styles, idStyles) {
@@ -1023,6 +1123,19 @@ function renderElements(elements, context, stateNames, styles, idStyles, animati
       rendered.push({ type: "layout", layout: element.layout, ...visualFor(element, styles, idStyles, animations), children: renderElements(element.body, context, stateNames, styles, idStyles, animations, components) });
       continue;
     }
+    if (element.type === "table") {
+      const items = evaluate(element.items, context, element.line);
+      if (!Array.isArray(items) || !items.every(isRecord)) throw new LumaError("A table needs a list of records.", element.line);
+      const columns = element.columns.map((column) => {
+        const label = evaluate(column.label, context, column.line);
+        const field = evaluate(column.field, context, column.line);
+        if (typeof label !== "string" || typeof field !== "string") throw new LumaError("A table column needs text for its label and field name.", column.line);
+        return { label, field };
+      });
+      const rows = items.map((item) => columns.map((column) => String(recordField(item, column.field, element.line))));
+      rendered.push({ type: "table", columns, rows, ...visualFor(element, styles, idStyles, animations) });
+      continue;
+    }
     if (element.type === "message") {
       const content = evaluate(element.content, context, element.line);
       const author = evaluate(element.author, context, element.line);
@@ -1034,6 +1147,23 @@ function renderElements(elements, context, stateNames, styles, idStyles, animati
     }
     if (["title", "heading", "subtitle", "text", "paragraph", "label", "caption", "quote", "code", "badge", "icon"].includes(element.type)) {
       rendered.push({ type: element.type, content: String(evaluate(element.value, context, element.line)), role: element.role, ...visualFor(element, styles, idStyles, animations) });
+      continue;
+    }
+    if (element.type === "avatar") {
+      rendered.push({ type: "avatar", content: String(evaluate(element.value, context, element.line)), ...visualFor(element, styles, idStyles, animations) });
+      continue;
+    }
+    if (element.type === "notice") {
+      const content = evaluate(element.content, context, element.line);
+      const kind = evaluate(element.kind, context, element.line);
+      if (typeof content !== "string" || !["info", "success", "warning", "danger"].includes(kind)) throw new LumaError("A notice needs text and a kind: info, success, warning, or danger.", element.line);
+      rendered.push({ type: "notice", content, kind, ...visualFor(element, styles, idStyles, animations) });
+      continue;
+    }
+    if (element.type === "stat") {
+      const label = evaluate(element.label, context, element.line);
+      if (typeof label !== "string") throw new LumaError("A stat label needs text.", element.line);
+      rendered.push({ type: "stat", label, value: String(evaluate(element.value, context, element.line)), ...visualFor(element, styles, idStyles, animations) });
       continue;
     }
     if (element.type === "link") {
@@ -1071,7 +1201,7 @@ function renderElements(elements, context, stateNames, styles, idStyles, animati
       const current = readVariable(context.variables, element.state, element.line);
       if (element.inputType === "number" && typeof current !== "number") throw new LumaError(`The number input '${element.state}' needs number state.`, element.line);
       if (element.inputType !== "number" && typeof current !== "string") throw new LumaError(`The ${element.inputType} input '${element.state}' needs text state.`, element.line);
-      rendered.push({ type: "input", inputType: element.inputType, state: element.state, label: String(evaluate(element.label, context, element.line)), current, ...visualFor(element, styles, idStyles, animations) });
+      rendered.push({ type: "input", inputType: element.inputType, state: element.state, label: String(evaluate(element.label, context, element.line)), current, ...(element.required ? { required: true } : {}), ...visualFor(element, styles, idStyles, animations) });
       continue;
     }
     if (element.type === "composer") {
@@ -1115,7 +1245,7 @@ function renderElements(elements, context, stateNames, styles, idStyles, animati
 }
 
 function renderScreen(screen, definition) {
-  return { name: screen.name, elements: renderElements(screen.body, contextFor(definition.variables, definition.functions), definition.stateNames, definition.styles, definition.idStyles, definition.animations, definition.components) };
+  return { name: screen.name, route: definition.routes.get(screen.name) ?? null, elements: renderElements(screen.body, contextFor(definition.variables, definition.functions), definition.stateNames, definition.styles, definition.idStyles, definition.animations, definition.components) };
 }
 
 function stateSnapshot(variables, stateNames) {
@@ -1124,7 +1254,7 @@ function stateSnapshot(variables, stateNames) {
 
 function buildApp(source, options = {}) {
   const definition = appDefinition(source, options.storage, options.data);
-  return { name: definition.name, state: stateSnapshot(definition.variables, definition.stateNames), remembered: [...definition.rememberedNames], data: [...definition.dataNames], apis: Object.fromEntries(definition.apis), theme: definition.theme, styles: Object.fromEntries(definition.styles), designs: Object.fromEntries(definition.designs), idStyles: Object.fromEntries(definition.idStyles), animations: Object.fromEntries(definition.animations), screens: definition.screens.map((screen) => renderScreen(screen, definition)) };
+  return { name: definition.name, state: stateSnapshot(definition.variables, definition.stateNames), remembered: [...definition.rememberedNames], data: [...definition.dataNames], apis: Object.fromEntries(definition.apis), libraries: definition.libraries, theme: definition.theme, styles: Object.fromEntries(definition.styles), designs: Object.fromEntries(definition.designs), idStyles: Object.fromEntries(definition.idStyles), animations: Object.fromEntries(definition.animations), screens: definition.screens.map((screen) => renderScreen(screen, definition)) };
 }
 
 function findInteractive(elements, type, match, context, components) {
@@ -1161,9 +1291,9 @@ function findInteractive(elements, type, match, context, components) {
   return null;
 }
 
-function createAppRuntime(source, { output = console.log, storage = null, data = null, fetcher = null } = {}) {
+function createAppRuntime(source, { output = console.log, storage = null, data = null, fetcher = null, route = null } = {}) {
   const definition = appDefinition(source, storage, data);
-  let currentScreen = definition.screens[0];
+  let currentScreen = definition.screens.find((screen) => definition.routes.get(screen.name) === route) ?? definition.screens[0];
   const context = () => contextFor(definition.variables, definition.functions);
   function persist() {
     if (!definition.storage?.write || definition.rememberedNames.size === 0) return;
@@ -1177,7 +1307,7 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
     if (definition.dataNames.has(name) && definition.data?.write) definition.data.write(definition.dataSources.get(name), value);
   }
   function view() {
-    return { name: definition.name, state: stateSnapshot(definition.variables, definition.stateNames), remembered: [...definition.rememberedNames], data: [...definition.dataNames], apis: Object.fromEntries(definition.apis), theme: definition.theme, designs: Object.fromEntries(definition.designs), animations: Object.fromEntries(definition.animations), screen: renderScreen(currentScreen, definition) };
+    return { name: definition.name, state: stateSnapshot(definition.variables, definition.stateNames), remembered: [...definition.rememberedNames], data: [...definition.dataNames], apis: Object.fromEntries(definition.apis), libraries: definition.libraries, theme: definition.theme, designs: Object.fromEntries(definition.designs), animations: Object.fromEntries(definition.animations), screen: renderScreen(currentScreen, definition) };
   }
   function enteredValue(element, value) {
     const inputType = element.type === "slider" ? "slider" : element.inputType;
@@ -1201,7 +1331,30 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
     if (inputType === "color" && (typeof value !== "string" || !/^#[0-9a-fA-F]{6}$/.test(value))) throw new LumaError(`The color '${element.state}' needs six-digit text such as #2563eb.`, element.line);
     if (inputType === "time" && (typeof value !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value))) throw new LumaError(`The time '${element.state}' needs 24-hour text such as 09:30.`, element.line);
     if (typeof value !== "string") throw new LumaError(`The ${inputType === "textarea" ? "textarea" : "input"} '${element.state}' needs text.`, element.line);
+    if (element.required && !value.trim()) throw new LumaError(`The input '${element.state}' is required.`, element.line);
     return value;
+  }
+  function requiredInputs(elements, executionContext, result = []) {
+    for (const element of elements) {
+      if (element.type === "input" && element.required) result.push({ element, context: executionContext });
+      else if (element.type === "layout") requiredInputs(element.body, executionContext, result);
+      else if (element.type === "if") requiredInputs(evaluate(element.condition, executionContext, element.line) ? element.then : element.otherwise, executionContext, result);
+      else if (element.type === "for") {
+        const values = evaluate(element.collection, executionContext, element.line);
+        if (!Array.isArray(values)) throw new LumaError("A 'for' loop needs a list after 'in'.", element.line);
+        for (const value of values) { const variables = new Map(executionContext.variables); variables.set(element.name, value); requiredInputs(element.body, { ...executionContext, variables }, result); }
+      } else if (element.type === "use") {
+        const used = componentContext(element, definition.components, executionContext);
+        requiredInputs(used.component.body, used.context, result);
+      }
+    }
+    return result;
+  }
+  function validateSubmit() {
+    for (const { element, context: inputContext } of requiredInputs(currentScreen.body, context())) {
+      const value = readVariable(inputContext.variables, element.state, element.line);
+      if (typeof value !== "string" || !value.trim()) throw new LumaError(`The input '${element.state}' is required.`, element.line);
+    }
   }
   function inputOnScreen(state) {
     return findInteractive(currentScreen.body, "input", (element) => element.state === state, context(), definition.components)
@@ -1279,6 +1432,7 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
   function press(label) {
     const found = findInteractive(currentScreen.body, "button", (element, buttonContext) => String(evaluate(element.label, buttonContext, element.line)) === label, context(), definition.components);
     if (!found) throw new LumaError(`The current screen has no button labelled '${label}'.`);
+    if (found.element.event === "submit") validateSubmit();
     runActions(found.element.actions, found.context);
     return view();
   }
@@ -1290,7 +1444,14 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
   }
   function pressId(id) {
     const found = byId(id, "button");
+    if (found.element.event === "submit") validateSubmit();
     runActions(found.element.actions, found.context);
+    return view();
+  }
+  function goRoute(routeName) {
+    const target = definition.screens.find((screen) => definition.routes.get(screen.name) === routeName);
+    if (!target) throw new LumaError(`There is no screen at '${routeName}'.`);
+    currentScreen = target;
     return view();
   }
   function enterId(id, value) {
@@ -1320,6 +1481,17 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
   function submitComposerId(id) {
     const found = byId(id, "composer");
     runActions(found.element.send.actions, found.context);
+    return view();
+  }
+  async function submitComposerAsync(state) {
+    const found = findInteractive(currentScreen.body, "composer", (element) => element.state === state, context(), definition.components);
+    if (!found) throw new LumaError(`The current screen has no composer named '${state}'.`);
+    await runActionsAsync(found.element.send.actions, found.context);
+    return view();
+  }
+  async function submitComposerIdAsync(id) {
+    const found = byId(id, "composer");
+    await runActionsAsync(found.element.send.actions, found.context);
     return view();
   }
   async function runActionsAsync(actions, executionContext = context(), callStack = []) {
@@ -1356,9 +1528,20 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
         if (!fetcher) throw new LumaError("This app needs a fetcher host before it can make an API request.", action.line);
         const sourceName = definition.apis.get(action.api);
         if (!sourceName) throw new LumaError(`There is no API named '${action.api}'.`, action.line);
-        const value = await fetcher(sourceName, { api: action.api, app: definition.name });
-        updateState(action.state, value, action.line);
-        executionContext.variables.set(action.state, value);
+        if (action.loading) { updateState(action.loading, true, action.line); executionContext.variables.set(action.loading, true); }
+        if (action.error) { updateState(action.error, "", action.line); executionContext.variables.set(action.error, ""); }
+        try {
+          const value = await fetcher(sourceName, { api: action.api, app: definition.name });
+          updateState(action.state, value, action.line);
+          executionContext.variables.set(action.state, value);
+        } catch (error) {
+          if (!action.error) throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          updateState(action.error, message, action.line);
+          executionContext.variables.set(action.error, message);
+        } finally {
+          if (action.loading) { updateState(action.loading, false, action.line); executionContext.variables.set(action.loading, false); }
+        }
         continue;
       }
       if (action.type === "go") {
@@ -1373,21 +1556,30 @@ function createAppRuntime(source, { output = console.log, storage = null, data =
   async function pressAsync(label) {
     const found = findInteractive(currentScreen.body, "button", (element, buttonContext) => String(evaluate(element.label, buttonContext, element.line)) === label, context(), definition.components);
     if (!found) throw new LumaError(`The current screen has no button labelled '${label}'.`);
+    if (found.element.event === "submit") validateSubmit();
     await runActionsAsync(found.element.actions, found.context);
     return view();
   }
   async function pressIdAsync(id) {
     const found = byId(id, "button");
+    if (found.element.event === "submit") validateSubmit();
     await runActionsAsync(found.element.actions, found.context);
     return view();
   }
-  return { choose, enter, toggle, press, pressAsync, chooseId, enterId, toggleId, pressId, pressIdAsync, submitComposer, submitComposerId, view };
+  return { choose, enter, toggle, press, pressAsync, chooseId, enterId, toggleId, pressId, pressIdAsync, submitComposer, submitComposerId, submitComposerAsync, submitComposerIdAsync, goRoute, view };
 }
 
 function previewElements(elements, lines, indent) {
   for (const element of elements) {
     const prefix = " ".repeat(indent);
     if (["title", "heading", "subtitle", "text", "paragraph", "label", "caption", "quote", "code", "badge", "icon"].includes(element.type)) lines.push(`${prefix}${element.content}`);
+    else if (element.type === "avatar") lines.push(`${prefix}[ avatar: ${element.content} ]`);
+    else if (element.type === "notice") lines.push(`${prefix}[ ${element.kind}: ${element.content} ]`);
+    else if (element.type === "stat") lines.push(`${prefix}${element.label}: ${element.value}`);
+    else if (element.type === "table") {
+      lines.push(`${prefix}${element.columns.map((column) => column.label).join(" | ")}`);
+      for (const row of element.rows) lines.push(`${prefix}${row.join(" | ")}`);
+    }
     else if (element.type === "link") lines.push(`${prefix}${element.label} -> ${element.target}`);
     else if (element.type === "image") lines.push(`${prefix}[ image: ${element.alt} ]`);
     else if (element.type === "progress") lines.push(`${prefix}Progress: ${element.value} from ${element.min} to ${element.max}`);
@@ -1459,7 +1651,7 @@ const SEMANTIC_TEXT = {
   label: [12, 720], caption: [13, 500], quote: [21, 520], code: [14, 500], badge: [12, 760], icon: [28, 500], link: [16, 650],
 };
 const ICONS = { sparkles: "✦", star: "★", check: "✓", heart: "♥", arrow: "→", plus: "+", menu: "☰", info: "i", warning: "!", user: "●" };
-const SURFACE_LAYOUTS = new Set(["card", "hero", "header", "footer", "nav", "aside", "conversation"]);
+const SURFACE_LAYOUTS = new Set(["page", "card", "panel", "hero", "header", "footer", "nav", "toolbar", "aside", "sidebar", "conversation"]);
 
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 function lerp(from, to, amount) { return from + (to - from) * amount; }
@@ -1497,6 +1689,8 @@ function layoutDefaults(layout, parent) {
   if (layout === "hero") return { surface: parent.surface, outline: parent.outline, outline_width: 1, radius: Math.max(22, parent.radius ?? 16), shadow: "medium" };
   if (layout === "header" || layout === "footer" || layout === "nav") return { surface: parent.surface, outline: parent.outline, outline_width: 1, radius: Math.max(14, parent.radius ?? 14) };
   if (layout === "conversation") return { surface: parent.surface, outline: parent.outline, outline_width: 1, radius: Math.max(20, parent.radius ?? 16), shadow: "small" };
+  if (layout === "panel" || layout === "sidebar") return { surface: parent.surface, outline: parent.outline, outline_width: 1, radius: Math.max(18, parent.radius ?? 16), shadow: "small" };
+  if (layout === "page") return { surface: parent.canvas, outline_width: 0, radius: 0 };
   return {};
 }
 
@@ -1608,7 +1802,8 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
     const isGrid = mode === "grid" || mode === "row";
     if (isGrid) {
       const responsive = width < 560 ? 1 : width < 900 ? 2 : 3;
-      const columns = Math.max(1, Math.min(elements.length || 1, layoutStyle.columns ?? (mode === "row" ? (width < 560 && layoutStyle.wrap !== false ? 1 : elements.length || 1) : responsive)));
+      const requestedColumns = width < 560 ? (layoutStyle.mobile_columns ?? (mode === "row" && layoutStyle.wrap !== false ? 1 : responsive)) : (layoutStyle.columns ?? (mode === "row" ? elements.length || 1 : responsive));
+      const columns = Math.max(1, Math.min(elements.length || 1, requestedColumns));
       const cellWidth = (width - gap * (columns - 1)) / columns;
       const children = [];
       let rowY = y;
@@ -1649,7 +1844,7 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
       const defaultPadding = SURFACE_LAYOUTS.has(element.layout) ? (style.spacing ?? 16) : 0;
       const padding = edgeValues(own, "padding", defaultPadding);
       const contentWidth = Math.max(1, width - padding.left - padding.right);
-      const mode = element.layout === "grid" ? "grid" : element.layout === "row" ? "row" : element.layout === "overlay" ? "overlay" : "column";
+      const mode = element.layout === "grid" ? "grid" : ["row", "toolbar", "nav"].includes(element.layout) ? "row" : element.layout === "overlay" ? "overlay" : "column";
       const childStyle = inheritedStyle(parentStyle, style);
       const laidOut = layoutCollection(element.children, node.x + padding.left, node.y + padding.top, contentWidth, childStyle, key, mode, style);
       node.children = laidOut.children;
@@ -1668,6 +1863,28 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
       node.appearance = appearance;
       node.padding = padding;
       node.height = padding.top + node.lines.length * appearance.lineHeight + padding.bottom;
+    } else if (element.type === "avatar") {
+      const size = own.width ?? own.height ?? 48;
+      node.width = size; node.height = size; node.totalWidth = size + margin.left + margin.right;
+    } else if (element.type === "notice") {
+      const padding = edgeValues(own, "padding", 14);
+      context.font = `600 ${own.font_size ?? 15}px ${FONTS[style.font] ?? FONTS.system}`;
+      node.lines = wrappedLines(context, element.content, width - padding.left - padding.right - 32);
+      node.padding = padding;
+      node.height = padding.top + Math.max(22, node.lines.length * 22) + padding.bottom;
+    } else if (element.type === "stat") {
+      node.height = own.height ?? 98;
+    } else if (element.type === "table") {
+      const padding = edgeValues(own, "padding", 0);
+      const columnWidth = Math.max(80, (width - padding.left - padding.right) / element.columns.length);
+      context.font = `500 ${own.font_size ?? 14}px ${FONTS[style.font] ?? FONTS.system}`;
+      node.headerHeight = 38;
+      node.tableRows = element.rows.map((row) => {
+        const lines = row.map((value) => wrappedLines(context, value, columnWidth - 20).slice(0, 2));
+        return { cells: lines, height: Math.max(42, ...lines.map((cell) => cell.length * 18 + 18)) };
+      });
+      node.padding = padding;
+      node.height = padding.top + node.headerHeight + node.tableRows.reduce((sum, row) => sum + row.height, 0) + padding.bottom;
     } else if (element.type === "message") {
       width = own.width ?? Math.min(width, Math.max(180, availableWidth * 0.78));
       node.width = width; node.totalWidth = width + margin.left + margin.right;
@@ -1771,7 +1988,7 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
   }
 
   function fillBox(node, style, fallback, now) {
-    const fill = style.surface ?? fallback;
+    const fill = style.surface_alpha === undefined ? (style.surface ?? fallback) : withAlpha(style.surface ?? fallback, style.surface_alpha);
     const radius = style.radius ?? 0;
     const [shadowX, shadowY, shadowBlur, shadowColor] = shadowFor(style.shadow, style.accent);
     context.save();
@@ -1821,6 +2038,60 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
       context.beginPath(); context.moveTo(textX, underlineY); context.lineTo(textX + context.measureText(node.lines[0]).width, underlineY); context.stroke();
       putZone("link", node, element);
     }
+  }
+
+  function drawAvatar(node, style) {
+    const content = node.element.content;
+    const imageLike = /^(https?:|data:image\/)/.test(content);
+    context.save(); context.beginPath(); context.arc(node.x + node.width / 2, node.y + node.height / 2, Math.min(node.width, node.height) / 2, 0, Math.PI * 2); context.clip();
+    if (imageLike) {
+      let image = imageCache.get(content);
+      if (!image) { image = new Image(); imageCache.set(content, image); image.onload = schedule; image.onerror = schedule; image.src = content; }
+      if (image.complete && image.naturalWidth) context.drawImage(image, node.x, node.y, node.width, node.height);
+      else { context.fillStyle = style.accent; context.fillRect(node.x, node.y, node.width, node.height); }
+    } else {
+      context.fillStyle = style.accent; context.fillRect(node.x, node.y, node.width, node.height);
+      const initials = content.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "?";
+      context.font = `750 ${Math.max(14, node.width * 0.38)}px ${FONTS[style.font] ?? FONTS.system}`; context.fillStyle = style.accent_text; context.textAlign = "center"; context.textBaseline = "middle";
+      context.fillText(initials, node.x + node.width / 2, node.y + node.height / 2 + 1); context.textAlign = "left"; context.textBaseline = "alphabetic";
+    }
+    context.restore();
+  }
+
+  function drawNotice(node, style) {
+    const tones = { info: "#2563eb", success: "#059669", warning: "#d97706", danger: "#dc2626" };
+    const accent = node.own.accent ?? tones[node.element.kind];
+    const noticeStyle = { ...style, accent, surface: node.own.surface ?? withAlpha(accent, 0.10), outline: node.own.outline ?? withAlpha(accent, 0.20), radius: node.own.radius ?? 14, shadow: node.own.shadow ?? "none" };
+    fillBox(node, noticeStyle, noticeStyle.surface);
+    context.font = `750 15px ${FONTS[style.font] ?? FONTS.system}`; context.fillStyle = accent; context.textBaseline = "alphabetic";
+    context.fillText({ info: "i", success: "✓", warning: "!", danger: "!" }[node.element.kind], node.x + node.padding.left, node.y + node.padding.top + 16);
+    context.font = `600 ${node.own.font_size ?? 15}px ${FONTS[style.font] ?? FONTS.system}`; context.fillStyle = style.text;
+    node.lines.forEach((line, index) => context.fillText(line, node.x + node.padding.left + 26, node.y + node.padding.top + 16 + index * 22));
+  }
+
+  function drawStat(node, style) {
+    fillBox(node, { ...style, surface: node.own.surface ?? style.surface, outline: node.own.outline ?? style.outline, radius: node.own.radius ?? 18, shadow: node.own.shadow ?? "small" }, style.surface);
+    context.font = `650 12px ${FONTS[style.font] ?? FONTS.system}`; context.fillStyle = style.muted;
+    context.fillText(node.element.label, node.x + 18, node.y + 28);
+    context.font = `780 ${node.own.font_size ?? 30}px ${FONTS[style.font] ?? FONTS.system}`; context.fillStyle = style.text;
+    context.fillText(node.element.value, node.x + 18, node.y + 69);
+  }
+
+  function drawTable(node, style) {
+    const tableStyle = { ...style, surface: node.own.surface ?? style.surface, outline: node.own.outline ?? style.outline, radius: node.own.radius ?? 16, shadow: node.own.shadow ?? "small" };
+    fillBox(node, tableStyle, tableStyle.surface);
+    const innerX = node.x + node.padding.left; const innerWidth = node.width - node.padding.left - node.padding.right;
+    const columnWidth = innerWidth / node.element.columns.length;
+    context.font = `750 12px ${FONTS[style.font] ?? FONTS.system}`; context.fillStyle = style.muted;
+    node.element.columns.forEach((column, index) => context.fillText(column.label, innerX + index * columnWidth + 10, node.y + node.padding.top + 24));
+    let cursor = node.y + node.padding.top + node.headerHeight;
+    context.font = `500 ${node.own.font_size ?? 14}px ${FONTS[style.font] ?? FONTS.system}`;
+    node.tableRows.forEach((row) => {
+      context.strokeStyle = style.outline; context.lineWidth = 1; context.beginPath(); context.moveTo(innerX, cursor); context.lineTo(innerX + innerWidth, cursor); context.stroke();
+      context.fillStyle = style.text;
+      row.cells.forEach((lines, index) => lines.forEach((line, lineIndex) => context.fillText(line, innerX + index * columnWidth + 10, cursor + 23 + lineIndex * 18)));
+      cursor += row.height;
+    });
   }
 
   function drawMessage(node, style) {
@@ -1883,6 +2154,10 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
       if (node.paintSurface) fillBox(node, style, style.surface, now);
       for (const child of node.children) drawNode(child, now, theme);
     } else if (["title", "heading", "subtitle", "text", "paragraph", "label", "caption", "quote", "code", "badge", "icon", "link"].includes(element.type)) drawTextNode(node, style);
+    else if (element.type === "avatar") drawAvatar(node, style);
+    else if (element.type === "notice") drawNotice(node, style);
+    else if (element.type === "stat") drawStat(node, style);
+    else if (element.type === "table") drawTable(node, style);
     else if (element.type === "message") drawMessage(node, style);
     else if (element.type === "divider") {
       context.strokeStyle = style.outline; context.lineWidth = node.height;
@@ -2028,7 +2303,7 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
         element.id ? runtime.chooseId(element.id, next) : runtime.choose(element.state, next);
       } else if (zone.kind === "toggle") element.id ? runtime.toggleId(element.id) : runtime.toggle(element.state);
       else if (zone.kind === "button") element.id ? await runtime.pressIdAsync(element.id) : await runtime.pressAsync(element.label);
-      else if (zone.kind === "composer_send") element.id ? runtime.submitComposerId(element.id) : runtime.submitComposer(element.state);
+      else if (zone.kind === "composer_send") element.id ? await runtime.submitComposerIdAsync(element.id) : await runtime.submitComposerAsync(element.state);
       else if (zone.kind === "link") window.open(element.target, "_blank", "noopener,noreferrer");
       message = ""; animationEpoch = performance.now();
     } catch (error) { message = `Luma: ${error.message}`; }
@@ -2062,10 +2337,160 @@ function mountLumaApp(container, source, { fetcher = defaultFetcher, storage = n
   return runtime;
 }
 
-globalThis.LumaRuntime = Object.freeze({ LumaError, parse, buildApp, createAppRuntime, previewApp, mountLumaApp });
 
-const LUMA_PLUGIN_VERSION = "1.2.0";
-const LUMA_LANGUAGE_VERSION = "0.7";
+function browserStorage(prefix) {
+  const available = typeof window !== "undefined" && window.localStorage;
+  return {
+    read: (name) => available ? window.localStorage.getItem(`${prefix}:${name}`) : null,
+    write: (name, value) => { if (available) window.localStorage.setItem(`${prefix}:${name}`, value); },
+  };
+}
+
+function browserData() {
+  const available = typeof window !== "undefined" && window.localStorage;
+  return {
+    read: (source) => {
+      if (!available) return null;
+      try { return JSON.parse(window.localStorage.getItem(`luma:data:${source}`) ?? "null"); } catch { return null; }
+    },
+    write: (source, value) => { if (available) window.localStorage.setItem(`luma:data:${source}`, JSON.stringify(value)); },
+  };
+}
+
+function defaultFetcher(source) {
+  return fetch(source).then(async (response) => {
+    if (!response.ok) throw new Error(`Request failed with ${response.status}.`);
+    return (response.headers.get("content-type") ?? "").includes("application/json") ? response.json() : response.text();
+  });
+}
+
+function initials(value) {
+  return String(value).trim().split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "?";
+}
+
+/**
+ * Mount the same Luma program as native semantic browser elements.
+ * This target intentionally adds no generated CSS: it exists for accessibility,
+ * native input behavior, text selection, and browser semantics.
+ */
+function mountAccessibleLumaApp(container, source, { fetcher = defaultFetcher, storage = null, data = null } = {}) {
+  if (!(container instanceof HTMLElement)) throw new Error("mountAccessibleLumaApp() needs a browser element to mount into.");
+  const initialRoute = typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") || null : null;
+  const runtime = createAppRuntime(source, { storage: storage ?? browserStorage("luma:remember"), data: data ?? browserData(), fetcher, route: initialRoute });
+  let error = "";
+  let knownRoute = null;
+
+  const activate = async (work) => {
+    try { await work(); error = ""; } catch (caught) { error = `Luma: ${caught.message}`; }
+    render();
+  };
+  const stateUpdate = (element, value) => activate(async () => {
+    if (element.id) runtime.enterId(element.id, value); else runtime.enter(element.state, value);
+  });
+
+  function text(tag, content) {
+    const node = document.createElement(tag); node.textContent = content; return node;
+  }
+  function renderElement(element) {
+    if (element.type === "layout") {
+      const tags = { page: "main", header: "header", footer: "footer", nav: "nav", aside: "aside", sidebar: "aside", section: "section", form: "form", hero: "section", list: "ul", toolbar: "div", panel: "section", card: "article", conversation: "section", row: "div", grid: "div", stack: "div", column: "div", overlay: "div" };
+      const node = document.createElement(tags[element.layout] ?? "div");
+      if (element.layout === "conversation") node.setAttribute("aria-label", "Conversation");
+      if (element.layout === "toolbar") node.setAttribute("role", "toolbar");
+      element.children.forEach((child) => node.append(renderElement(child)));
+      return node;
+    }
+    const textTags = { title: "h2", heading: "h1", subtitle: "h2", text: "p", paragraph: "p", label: "p", caption: "small", quote: "blockquote", code: "code", badge: "mark", icon: "span" };
+    if (textTags[element.type]) return text(textTags[element.type], element.content);
+    if (element.type === "link") { const node = text("a", element.label); node.href = element.target; return node; }
+    if (element.type === "image") { const node = document.createElement("img"); node.src = element.source; node.alt = element.alt; return node; }
+    if (element.type === "progress") { const node = document.createElement("progress"); node.value = element.value; node.max = element.max; node.textContent = `${element.value} of ${element.max}`; return node; }
+    if (element.type === "divider") return document.createElement("hr");
+    if (element.type === "spacer") return document.createElement("br");
+    if (element.type === "avatar") {
+      if (/^(https?:|data:image\/)/.test(element.content)) { const node = document.createElement("img"); node.src = element.content; node.alt = "Avatar"; return node; }
+      const node = text("span", initials(element.content)); node.setAttribute("role", "img"); node.setAttribute("aria-label", `Avatar for ${element.content}`); return node;
+    }
+    if (element.type === "notice") { const node = text("aside", element.content); node.setAttribute("role", element.kind === "danger" ? "alert" : "status"); node.setAttribute("aria-label", element.kind); return node; }
+    if (element.type === "stat") { const node = document.createElement("dl"); node.append(text("dt", element.label), text("dd", element.value)); return node; }
+    if (element.type === "table") {
+      const table = document.createElement("table"); const head = document.createElement("thead"); const headRow = document.createElement("tr");
+      element.columns.forEach((column) => headRow.append(text("th", column.label))); head.append(headRow); table.append(head);
+      const body = document.createElement("tbody"); element.rows.forEach((row) => { const tableRow = document.createElement("tr"); row.forEach((cell) => tableRow.append(text("td", cell))); body.append(tableRow); }); table.append(body); return table;
+    }
+    if (element.type === "message") { const node = document.createElement("article"); node.setAttribute("aria-label", `${element.author} says`); node.append(text("strong", element.author), text("p", element.content)); return node; }
+    if (element.type === "input") {
+      const label = text("label", element.label); const input = element.inputType === "textarea" ? document.createElement("textarea") : document.createElement("input");
+      if (element.inputType !== "textarea") input.type = { phone: "tel", input: "text" }[element.inputType] ?? element.inputType;
+      input.value = String(element.current); input.required = Boolean(element.required); input.addEventListener("change", () => stateUpdate(element, input.value));
+      label.append(input); return label;
+    }
+    if (element.type === "slider") {
+      const label = text("label", element.label); const input = document.createElement("input"); input.type = "range"; input.min = String(element.min); input.max = String(element.max); if (element.step !== null) input.step = String(element.step); input.value = String(element.current); input.addEventListener("input", () => stateUpdate(element, Number(input.value))); label.append(input); return label;
+    }
+    if (element.type === "toggle") { const label = text("label", element.label); const input = document.createElement("input"); input.type = "checkbox"; input.checked = element.current; input.addEventListener("change", () => activate(async () => { element.id ? runtime.toggleId(element.id) : runtime.toggle(element.state); })); label.append(input); return label; }
+    if (element.type === "choice") {
+      const label = document.createElement("label"); label.append(text("span", element.state)); const select = document.createElement("select");
+      element.options.forEach((option) => { const item = text("option", option); item.value = option; item.selected = option === element.current; select.append(item); });
+      select.addEventListener("change", () => activate(async () => { element.id ? runtime.chooseId(element.id, select.value) : runtime.choose(element.state, select.value); })); label.append(select); return label;
+    }
+    if (element.type === "composer") {
+      const form = document.createElement("form"); const input = document.createElement("textarea"); input.placeholder = element.label; input.value = element.current; input.addEventListener("change", () => stateUpdate(element, input.value));
+      const send = text("button", element.send.label); send.type = "submit"; form.addEventListener("submit", (event) => { event.preventDefault(); activate(async () => { if (element.id) await runtime.submitComposerIdAsync(element.id); else await runtime.submitComposerAsync(element.state); }); }); form.append(input, send); return form;
+    }
+    if (element.type === "button") { const node = text("button", element.label); node.type = "button"; node.addEventListener("click", () => activate(async () => { element.id ? await runtime.pressIdAsync(element.id) : await runtime.pressAsync(element.label); })); return node; }
+    return text("p", `[Unsupported Luma element: ${element.type}]`);
+  }
+  function render() {
+    const view = runtime.view(); const root = document.createElement("main"); root.setAttribute("aria-label", view.name);
+    if (view.screen.route && typeof window !== "undefined") {
+      const hash = `#${view.screen.route}`;
+      if (knownRoute === null && window.location.hash !== hash) window.history.replaceState(null, "", hash);
+      else if (knownRoute !== null && knownRoute !== view.screen.route) window.history.pushState(null, "", hash);
+      knownRoute = view.screen.route;
+    }
+    root.append(...view.screen.elements.map(renderElement));
+    if (error) { const node = text("p", error); node.setAttribute("role", "alert"); root.append(node); }
+    container.replaceChildren(root);
+  }
+  const onHashChange = () => {
+    const next = window.location.hash.replace(/^#/, "");
+    if (!next) return;
+    try { runtime.goRoute(next); error = ""; } catch (caught) { error = `Luma: ${caught.message}`; }
+    knownRoute = next; render();
+  };
+  if (typeof window !== "undefined") window.addEventListener("hashchange", onHashChange);
+  render();
+  runtime.destroy = () => { if (typeof window !== "undefined") window.removeEventListener("hashchange", onHashChange); container.replaceChildren(); };
+  return runtime;
+}
+
+function formatLuma(source) {
+  parse(source);
+  const lines = String(source).replace(/\r\n/g, "\n").split("\n");
+  const formatted = [];
+  let previousBlank = true;
+  for (const line of lines) {
+    const clean = line.replace(/[ \t]+$/g, "");
+    if (!clean.trim()) {
+      if (!previousBlank) formatted.push("");
+      previousBlank = true;
+    } else {
+      formatted.push(clean);
+      previousBlank = false;
+    }
+  }
+  while (formatted.at(-1) === "") formatted.pop();
+  return `${formatted.join("\n")}\n`;
+}
+function checkLuma(source, options = {}) {
+  const program = parse(source);
+  return buildApp(program, options);
+}
+globalThis.LumaRuntime = Object.freeze({ LumaError, parse, buildApp, createAppRuntime, previewApp, mountLumaApp, mountAccessibleLumaApp, formatLuma, checkLuma });
+
+const LUMA_PLUGIN_VERSION = "2.1.0";
+const LUMA_LANGUAGE_VERSION = "1.1";
 const LUMA_POLL_INTERVAL = 160;
 const LUMA_RENDER_DELAY = 320;
 
